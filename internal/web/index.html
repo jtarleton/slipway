@@ -180,6 +180,33 @@
   .st.cancelled { color: var(--dim); }
   .empty { color: var(--dim); font-size: 12px; padding: 12px 14px; }
 
+  /* ---- tabs ---- */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: -10px; }
+  .tab {
+    background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 8px 15px 10px; font: inherit; font-weight: 600; font-size: 13px;
+    color: var(--dim); cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab[aria-selected="true"] { color: var(--blue); border-bottom-color: var(--blue); }
+  .tabcount {
+    background: var(--line-2); color: var(--dim); border-radius: 10px;
+    min-width: 18px; text-align: center; padding: 0 6px; font-size: 11px; font-weight: 700;
+  }
+  .tab[aria-selected="true"] .tabcount { background: #dcecf7; color: var(--blue-dark); }
+  .panel { display: grid; gap: 24px; }
+
+  /* ---- snapshots, grouped by environment ---- */
+  .snap-group + .snap-group { margin-top: 18px; }
+  .snap-h {
+    margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--ink);
+    text-transform: capitalize; display: flex; align-items: center; gap: 8px;
+  }
+  .snap-h .snap-n {
+    text-transform: none; font-size: 11px; font-weight: 700; color: var(--dim);
+    background: var(--line-2); border-radius: 10px; padding: 0 7px;
+  }
+
   /* ---- in-progress indicators ---- */
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
@@ -218,6 +245,12 @@
 </header>
 
 <main>
+  <nav class="tabs" id="tabs">
+    <button class="tab" type="button" data-tab="workflow" aria-selected="true">Workflow</button>
+    <button class="tab" type="button" data-tab="databases" aria-selected="false">Databases<span class="tabcount" id="db-count" hidden>0</span></button>
+  </nav>
+
+  <div class="panel" id="panel-workflow">
   <section>
     <h2>Workflow <span class="running-tag" id="running"></span></h2>
     <div class="matrix" id="matrix"><div class="empty">reading cluster…</div></div>
@@ -329,11 +362,6 @@
     <div class="tablewrap"><div id="releases"></div></div>
   </section>
 
-  <section id="snapshots-sec" hidden>
-    <h2>Snapshots</h2>
-    <div class="tablewrap"><div id="snapshots"></div></div>
-  </section>
-
   <section id="history-sec" hidden>
     <h2>Operation history</h2>
     <div class="tablewrap"><div id="history"></div></div>
@@ -343,6 +371,15 @@
     <h2>Job steps</h2>
     <div class="tablewrap"><div id="jobs"><div class="empty">no jobs yet</div></div></div>
   </section>
+  </div><!-- /panel-workflow -->
+
+  <div class="panel" id="panel-databases" hidden>
+    <section id="snapshots-sec">
+      <h2>Database snapshots</h2>
+      <p class="empty" style="margin:-4px 0 4px">Pre-operation database dumps in object storage, newest first — every deploy and copy-down takes one.</p>
+      <div id="snapshots"><div class="empty">No database snapshots recorded yet.</div></div>
+    </section>
+  </div><!-- /panel-databases -->
 </main>
 
 <div class="overlay" id="overlay" hidden>
@@ -364,6 +401,7 @@
   let runningOp = "";   // e.g. "deploy stage" / "copy-down prod→stage"
   let lastGrid = [];
   let lastJobs = [];
+  let lastSnapshots = [];
   let stalledGroups = new Set();
   const TERMINAL = new Set(["succeeded", "failed", "cancelled", "orphaned"]);
 
@@ -378,6 +416,7 @@
     lastGrid = rows || [];
     envs = lastGrid.map(r => ({ name: r.env, rank: r.rank, prod: r.prod }));
     fillEnvSelects();
+    renderSnapshots(lastSnapshots);   // regroup once env order is known
 
     const m = $("matrix");
     if (!lastGrid.length) { m.innerHTML = '<div class="empty">no environments</div>'; return; }
@@ -627,19 +666,40 @@
   });
 
   function renderSnapshots(rows) {
-    rows = rows || [];
-    $("snapshots-sec").hidden = rows.length === 0;
-    if (!rows.length) return;
-    $("snapshots").innerHTML = `<table><thead><tr>
-        <th>Taken</th><th>Env</th><th>Object</th><th></th>
-      </tr></thead><tbody>` + rows.map(s => `
-        <tr>
-          <td class="mono">${esc(s.taken)}</td>
-          <td>${esc(s.env)}</td>
-          <td class="mono" style="max-width:360px;overflow:hidden;text-overflow:ellipsis">${esc(s.key)}</td>
-          <td><button class="act" data-restore="${s.id}" data-env="${esc(s.env)}"
-                data-taken="${esc(s.taken)}">restore</button></td>
-        </tr>`).join("") + `</tbody></table>`;
+    lastSnapshots = rows || [];
+    const badge = $("db-count");
+    badge.textContent = lastSnapshots.length;
+    badge.hidden = lastSnapshots.length === 0;
+
+    const el = $("snapshots");
+
+    // one table per environment, in promotion order (dev, stage, prod). Fall
+    // back to whatever envs appear in the rows if the grid hasn't loaded yet.
+    const names = envs.length ? envs.map(e => e.name) : [];
+    for (const s of lastSnapshots) if (!names.includes(s.env)) names.push(s.env);
+    if (!names.length || !lastSnapshots.length) {
+      el.innerHTML = '<div class="empty">No database snapshots recorded yet.</div>';
+      return;
+    }
+
+    el.innerHTML = names.map(env => {
+      const snaps = lastSnapshots.filter(s => s.env === env);
+      const head = `<h3 class="snap-h">${esc(env)}<span class="snap-n">${
+        snaps.length ? snaps.length + (snaps.length === 1 ? " snapshot" : " snapshots") : "none"
+      }</span></h3>`;
+      const inner = snaps.length
+        ? `<table><thead><tr><th>ID</th><th>Taken</th><th>Object</th><th></th></tr></thead><tbody>` +
+          snaps.map(s => `
+            <tr>
+              <td class="mono">${s.id}</td>
+              <td class="mono">${esc(s.taken)}</td>
+              <td class="mono" style="max-width:380px;overflow:hidden;text-overflow:ellipsis">${esc(s.key)}</td>
+              <td><button class="act" data-restore="${s.id}" data-env="${esc(s.env)}"
+                    data-taken="${esc(s.taken)}">restore</button></td>
+            </tr>`).join("") + `</tbody></table>`
+        : `<div class="empty">No snapshots for ${esc(env)} yet.</div>`;
+      return `<div class="snap-group">${head}<div class="tablewrap">${inner}</div></div>`;
+    }).join("");
   }
   $("snapshots").addEventListener("click", (e) => {
     const id = e.target.getAttribute("data-restore");
@@ -781,6 +841,22 @@
   wireForm("f-adopt", "/api/adopt");
   wireForm("f-copydown", "/api/copy-down");
   wireForm("f-schedule", "/api/schedules");
+
+  // ---- tabs -----------------------------------------------
+  const TABS = ["workflow", "databases"];
+  function showTab(name) {
+    if (!TABS.includes(name)) name = "workflow";
+    for (const t of TABS) {
+      $("panel-" + t).hidden = t !== name;
+      document.querySelector(`.tab[data-tab="${t}"]`).setAttribute("aria-selected", String(t === name));
+    }
+    try { localStorage.setItem("slipway.tab", name); } catch (e) {}
+  }
+  document.querySelectorAll(".tab").forEach(b =>
+    b.addEventListener("click", () => showTab(b.dataset.tab)));
+  let startTab = "workflow";
+  try { startTab = localStorage.getItem("slipway.tab") || "workflow"; } catch (e) {}
+  showTab(startTab);
 
   // ---- event stream ----------------------------------------
   function connect() {
