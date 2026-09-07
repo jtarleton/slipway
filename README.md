@@ -37,14 +37,21 @@ renders the grid and drives operations, and a loop that reconciles in-flight
 jobs every few seconds — so a sequence started from the CLI, or stranded by a
 crash, finishes without a terminal held open.
 
+![The workflow matrix: Code / Database / Files down the side, environments across the top](docs/web-ui.png)
+
 The page lays the three artifacts out as an Acquia-style workflow matrix: **Code
 / Database / Files** down the side, environments across the top. Drag a Code cell
 onto a later environment to deploy the digest it runs; drag a Database or Files
 cell onto an earlier environment to copy it down. Each drop opens a confirm
 dialog, then the operation runs. The Database and Files cells show when data was
-last copied in, read back from job history. Anything the drag gestures don't
-cover — deploying an arbitrary image, `-clean`, `-skip-config-import` — is under
-"Manual operations".
+last copied in, read back from job history — in the shot above, `stage` holds a
+copy pulled from `prod`, `dev` has never been seeded, and `prod` is the source of
+record. Anything the drag gestures don't cover — deploying an arbitrary image,
+`-clean`, `-skip-config-import` — is under "Manual operations".
+
+Below the matrix a live log streams the running operation's output, and a
+recent-jobs table shows every step's state — both pushed over the same event
+stream that drives the grid.
 
 Every operation is the same `internal/ops` call the CLI makes; the server only
 adds a single-flight guard (one operation at a time — copy-down scales a
