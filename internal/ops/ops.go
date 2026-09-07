@@ -839,13 +839,26 @@ func (r *Runner) ReconcileOnce(ctx context.Context) (engine.Stats, error) {
 // RunSequence drives the engine until nothing is left to run.
 //
 // A pass that advances nothing while jobs remain means the sequence has stalled
-// on a failure; reporting that beats spinning until the context expires.
+// on a failure; reporting that beats spinning until the context expires. And
+// when nothing is left, "left" is not the same as "succeeded": a step that
+// failed is also terminal, so the jobs this call was driving are checked before
+// it reports success.
 func (r *Runner) RunSequence(ctx context.Context) error {
 	envs, err := r.DB.Environments()
 	if err != nil {
 		return err
 	}
 	eng := engine.New(r.DB, r.Client, drupal.NewPlanner(envs, r.Images), nil)
+
+	// The jobs this call is responsible for — everything unfinished right now.
+	watching, err := r.DB.Unfinished()
+	if err != nil {
+		return err
+	}
+	watchIDs := make([]int64, len(watching))
+	for i, j := range watching {
+		watchIDs[i] = j.ID
+	}
 
 	// Only report transitions; a reconcile loop that reprints the same line
 	// every few seconds buries the one line that mattered.
@@ -862,6 +875,19 @@ func (r *Runner) RunSequence(ctx context.Context) error {
 			return err
 		}
 		if len(remaining) == 0 {
+			done, err := r.DB.JobsByIDs(watchIDs)
+			if err != nil {
+				return err
+			}
+			var failed []string
+			for _, j := range done {
+				if j.State != jobs.Succeeded {
+					failed = append(failed, fmt.Sprintf("%s (%s: %s)", j.Kind, j.State, j.Reason))
+				}
+			}
+			if len(failed) > 0 {
+				return fmt.Errorf("%d step(s) did not succeed: %s", len(failed), strings.Join(failed, "; "))
+			}
 			r.say("  all steps succeeded")
 			return nil
 		}

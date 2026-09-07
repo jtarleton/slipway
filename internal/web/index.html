@@ -153,7 +153,7 @@
   .log:empty::after { content: "idle — no operation running"; color: #66727f; }
   .log .t { color: #66727f; }
   .log .fail { color: #ef8a80; }
-  .running-tag { color: var(--blue); font-size: 12px; font-weight: 600; margin-left: 8px; }
+  .running-tag { color: var(--blue); font-size: 12px; font-weight: 600; margin-left: 8px; display: inline-flex; align-items: center; gap: 7px; }
 
   /* ---- stalls ---- */
   .stall {
@@ -179,6 +179,33 @@
   .st.pending { color: var(--warn); }
   .st.cancelled { color: var(--dim); }
   .empty { color: var(--dim); font-size: 12px; padding: 12px 14px; }
+
+  /* ---- in-progress indicators ---- */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes rowpulse { 0%, 100% { background: transparent; } 50% { background: rgba(13, 106, 176, 0.055); } }
+
+  .spin, .st.running::before, .st.submitted::before {
+    content: ""; display: inline-block; box-sizing: border-box;
+    width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid rgba(13, 106, 176, 0.22);
+    border-top-color: var(--blue);
+    animation: spin 0.7s linear infinite;
+  }
+  .st.running::before, .st.submitted::before { margin-right: 7px; vertical-align: -1px; }
+  .spin { vertical-align: -2px; }
+  .st.pending::before {
+    content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px;
+    border-radius: 50%; background: var(--warn); animation: blink 1.4s ease-in-out infinite;
+  }
+  /* the row itself breathes while a step is live (degrades to nothing without :has) */
+  tr:has(td.st.running), tr:has(td.st.submitted) { animation: rowpulse 2.4s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin, .st.running::before, .st.submitted::before, .st.pending::before,
+    tr:has(td.st.running), tr:has(td.st.submitted) { animation: none; }
+    .st.running::before, .st.submitted::before { border-top-color: rgba(13, 106, 176, 0.22); }
+  }
 </style>
 </head>
 <body>
@@ -283,7 +310,7 @@
   </section>
 
   <section>
-    <h2>Live log</h2>
+    <h2>Live log <span class="running-tag" id="log-running"></span></h2>
     <div class="log" id="log"></div>
   </section>
 
@@ -334,6 +361,7 @@
   const $ = (id) => document.getElementById(id);
   let envs = [];          // [{name, rank, prod}]
   let running = false;
+  let runningOp = "";   // e.g. "deploy stage" / "copy-down prod→stage"
   let lastGrid = [];
   let lastJobs = [];
   let stalledGroups = new Set();
@@ -357,8 +385,10 @@
 
     let html = '<div class="corner"></div>';
     for (const r of lastGrid) {
+      const busy = running && new RegExp(`(^|[ →])${r.env}([ →]|$)`).test(runningOp);
       html += `<div class="envhead" data-env="${esc(r.env)}" data-rank="${r.rank}">
-        <div class="en">${esc(r.env)}${r.prod ? '<span class="tag">prod</span>' : ''}</div>
+        <div class="en">${esc(r.env)}${r.prod ? '<span class="tag">prod</span>' : ''}${
+          busy ? '<span class="spin" style="margin-left:7px"></span>' : ''}</div>
         <div class="host">${esc(r.host)}</div>
         <div class="st"><span class="dot ${esc(cls(r.state))}"></span>${esc(r.state)}
           <span class="reps">${esc(r.replicas)}</span></div>
@@ -668,7 +698,7 @@
           <td class="mono">${esc(s.spec)}</td>
           <td class="mono">${esc(s.enabled ? s.next : '—')}</td>
           <td class="mono">${esc(s.last_run || '—')}</td>
-          <td class="${/^failed/.test(s.last_status) ? 'st failed' : 'st'}">${esc(s.last_status || '—')}</td>
+          <td class="st ${/^failed/.test(s.last_status) ? 'failed' : s.last_status === 'running' ? 'running' : ''}">${esc(s.last_status || '—')}</td>
           <td style="white-space:nowrap">
             <button class="act" data-sched-run="${esc(s.name)}">run now</button>
             <button class="act" data-sched-toggle="${esc(s.name)}" data-to="${!s.enabled}">${s.enabled ? 'disable' : 'enable'}</button>
@@ -704,7 +734,10 @@
   // ---- state / log --------------------------------------------
   function setState(st) {
     running = !!st.running;
-    $("running").textContent = running ? "▶ " + (st.operation || "running") : "";
+    runningOp = running ? (st.operation || "") : "";
+    const tag = running ? `<span class="spin"></span>${esc(st.operation || "running")}` : "";
+    $("running").innerHTML = tag;
+    $("log-running").innerHTML = running ? `<span class="spin"></span>running` : "";
     document.querySelectorAll("form .btn, #resume-btn").forEach(b => b.disabled = running);
     // re-render the matrix so draggability and the per-env action buttons
     // reflect the run state

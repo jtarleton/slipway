@@ -115,6 +115,49 @@ func (d *DB) Recent(limit int) ([]JobRow, error) {
 	return out, rows.Err()
 }
 
+// JobsByIDs returns the named jobs, in id order. Missing ids are skipped. Used
+// to check how a batch of steps finished after the sequence drains.
+func (d *DB) JobsByIDs(ids []int64) ([]Job, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	q := `SELECT id, deployment_id, env_id, group_id, seq, kind, k8s_job_name, state, reason, payload
+	      FROM jobs WHERE id IN (` + placeholders(len(ids)) + `) ORDER BY id`
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := d.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs by id: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Job
+	for rows.Next() {
+		var j Job
+		var kind, state string
+		if err := rows.Scan(&j.ID, &j.DeploymentID, &j.EnvID, &j.GroupID, &j.Seq, &kind,
+			&j.K8sJobName, &state, &j.Reason, &j.Payload); err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		j.Kind, j.State = jobs.Kind(kind), jobs.State(state)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	s := "?"
+	for i := 1; i < n; i++ {
+		s += ",?"
+	}
+	return s
+}
+
 // Runnable returns the jobs the engine may act on right now: within each
 // group, the earliest unfinished job whose predecessors have all succeeded.
 //

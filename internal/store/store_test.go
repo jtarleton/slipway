@@ -285,6 +285,36 @@ func TestRunnableStallsAfterAFailure(t *testing.T) {
 	}
 }
 
+func TestJobsByIDs(t *testing.T) {
+	db := open(t)
+	envID := seedEnv(t, db)
+
+	var ids []int64
+	for i, k := range []jobs.Kind{jobs.KindSnapshot, jobs.KindRestore, jobs.KindSanitize} {
+		id, err := db.CreateJob(Job{
+			EnvID: envID, GroupID: "g", Seq: i, Kind: k,
+			K8sJobName: jobs.Name("prod", 7, i, k),
+		})
+		if err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	mustAdvance(t, db, ids[0], jobs.Pending, jobs.Succeeded)
+	mustAdvance(t, db, ids[1], jobs.Pending, jobs.Failed)
+
+	got, err := db.JobsByIDs([]int64{ids[0], ids[1], 9999})
+	if err != nil {
+		t.Fatalf("JobsByIDs: %v", err)
+	}
+	if len(got) != 2 || got[0].State != jobs.Succeeded || got[1].State != jobs.Failed {
+		t.Fatalf("JobsByIDs = %+v, want the two real jobs with their states", got)
+	}
+	if r, _ := db.JobsByIDs(nil); r != nil {
+		t.Errorf("JobsByIDs(nil) = %+v, want nil", r)
+	}
+}
+
 func TestStallsAndCancelGroup(t *testing.T) {
 	db := open(t)
 	envID := seedEnv(t, db)
