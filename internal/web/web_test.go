@@ -224,6 +224,15 @@ func TestRestoreNeedsEnvAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestAdoptNeedsAnEnv(t *testing.T) {
+	s := testServer(t)
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/adopt", ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("adopt with no env: status %d, want 400", rec.Code)
+	}
+}
+
 func TestGridNamesTheRunningRelease(t *testing.T) {
 	s := testServer(t)
 	digest := "sha256:" + strings.Repeat("a", 64) // matches prod's image in testServer

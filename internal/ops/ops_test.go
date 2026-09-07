@@ -88,6 +88,17 @@ func TestRollbackNeedsARecordedDeploy(t *testing.T) {
 	}
 }
 
+func TestAdoptRejectsAnUnknownEnvAndIsAudited(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	if err := r.Adopt(context.Background(), "staging-typo"); err == nil {
+		t.Fatal("Adopt accepted an environment that is not registered")
+	}
+	hist, _ := r.DB.History(5)
+	if len(hist) != 1 || hist[0].Action != "adopt" {
+		t.Fatalf("adopt failure not audited: %+v", hist)
+	}
+}
+
 func TestRecordReleaseRequiresADigestPinnedImage(t *testing.T) {
 	r := testRunner(t)
 	if err := r.RecordRelease("ghcr.io/x/d:latest", "sha", "refs/tags/v1", ""); err == nil {

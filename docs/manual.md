@@ -119,6 +119,26 @@ one build, collapse to one row.
 List recorded releases, newest build first. `slipway deploy -release` takes the
 `REF` column.
 
+### `slipway adopt -env NAME`
+
+Strip leftover ArgoCD tracking metadata from an environment's namespace, so
+slipway is its unambiguous owner.
+
+```
+slipway adopt -env prod
+```
+
+When ArgoCD is removed from a namespace but its `argocd.argoproj.io/*`
+annotations stay on the resources, a later ArgoCD reinstall silently re-adopts
+everything and starts fighting slipway's patches. `adopt` sweeps the namespace
+(Deployments, Services, PVCs, CronJobs, Jobs, Secrets, ConfigMaps, Ingresses,
+ServiceAccounts, RBAC, and the like) and removes those annotations plus the
+`argocd.argoproj.io/instance` label.
+
+Idempotent — a namespace that was never under ArgoCD reports "nothing to do".
+Stale annotations on old ReplicaSets are left alone; they are churn to patch and
+age out on their own as new deploys create fresh ones.
+
 ### `slipway deploy -env NAME (-image REF | -release REF)`
 
 Snapshot the database, deploy, wait for the rollout, then run the post-deploy
@@ -448,6 +468,7 @@ The **Manual operations** disclosure holds what the drag gestures don't cover:
 
 - **Deploy a specific image** — deploy an arbitrary image reference to any
   environment (e.g. a hotfix build, or a rollback to an older digest).
+- **Detach ArgoCD** — run `slipway adopt` for an environment.
 - **Copy down (all options)** — choose source and target freely and combine
   `database only` / `files only` / `clean target tree`.
 
@@ -496,6 +517,7 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |
 | POST   | `/api/pin`        | `env`                                                     |
+| POST   | `/api/adopt`      | `env`                                                     |
 | POST   | `/api/deploy`     | `env`, and one of `image` / `release`; `no_snapshot`, `skip_update`, `skip_config_import` |
 | POST   | `/api/snapshot`   | `env`                                                    |
 | POST   | `/api/restore`    | `env`, `snapshot` (id)                                   |

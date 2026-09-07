@@ -29,6 +29,7 @@ const usage = `slipway — deployment control plane for Drupal on k3s
   slipway release -image REF -sha SHA -ref REF   record a built image (what CI calls after a build)
   slipway releases                 list recorded releases
   slipway pin   -env NAME          rewrite a tag-pinned Deployment to the digest it is already running
+  slipway adopt -env NAME          strip leftover ArgoCD tracking so slipway owns the namespace
   slipway deploy -env NAME (-image REF | -release REF)   snapshot the database, deploy, wait, run update hooks
         -no-snapshot  skip the pre-deploy snapshot   -skip-update  skip update hooks
   slipway snapshot  -env NAME       dump the database to object storage and record it
@@ -135,7 +136,7 @@ func run(args []string) error {
 	// one of them.
 	deadline := 30 * time.Second
 	switch command {
-	case "pin":
+	case "pin", "adopt":
 		deadline = 15 * time.Minute
 	case "deploy", "snapshot", "restore", "rollback", "copy-down", "resume":
 		deadline = 6 * time.Hour
@@ -154,6 +155,8 @@ func run(args []string) error {
 		return printReleases(runner)
 	case "pin":
 		return runner.Pin(ctx, *env)
+	case "adopt":
+		return runner.Adopt(ctx, *env)
 	case "deploy":
 		return runner.Deploy(ctx, *env, *image, *release, *skipUpdate, *skipConfig, *noSnapshot)
 	case "snapshot":

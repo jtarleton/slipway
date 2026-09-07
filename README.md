@@ -26,6 +26,7 @@ deployed and promoted by name.
 | `slipway release -image REF -sha SHA -ref REF` | record a built image (what CI calls after a build) |
 | `slipway releases` | list recorded releases |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
+| `slipway adopt -env NAME` | strip leftover ArgoCD tracking so slipway is the namespace's sole owner |
 | `slipway deploy -env NAME (-image REF \| -release REF)` | snapshot the database, patch, wait for the rollout, run update hooks |
 | `slipway snapshot -env NAME` | dump the database to object storage and record it |
 | `slipway snapshots -env NAME` / `restore -snapshot ID` | list snapshots, load one back |
@@ -118,6 +119,13 @@ row on completion — action, target, actor (`cli` or `web`), and outcome —
 regardless of which front end invoked it. `slipway history` and the web UI's
 operation-history table read the same log.
 
+**Slipway is the sole owner of the namespace.** `deploy` and `pin` patch
+Deployments directly, with no GitOps controller to fight. `slipway adopt` makes
+that literally true: it sweeps the environment's namespace with the dynamic
+client and strips every `argocd.argoproj.io/*` annotation and instance label, so
+a reinstalled ArgoCD cannot silently re-adopt what Slipway now manages. It is
+idempotent — a namespace that was never under ArgoCD is left untouched.
+
 **A release is recorded once, deployed by name.** CI `POST`s the built image and
 its git provenance to `/api/releases` (bearer-token gated, the one endpoint
 reachable from outside). `slipway deploy -release v2.1.0` resolves that to the
@@ -143,7 +151,10 @@ existing table.
   a stopgap; the destinations need to be per-environment.
 - `jamestarleton-k8s-manifests` no longer syncs anything for the Drupal
   namespaces — ArgoCD was removed from them so Slipway could own the spec.
-  Backups of the removed Applications are in `deploy/argocd-removed/`.
+  Backups of the removed Applications are in `deploy/argocd-removed/`. The
+  leftover `argocd.argoproj.io/*` metadata on the workloads has been cleared
+  with `slipway adopt` (stale annotations on old ReplicaSets age out on their
+  own).
 
 ## Development
 

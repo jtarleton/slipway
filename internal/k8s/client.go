@@ -12,13 +12,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Client is a namespaced view of one cluster.
 type Client struct {
-	cs kubernetes.Interface
+	cs  kubernetes.Interface
+	dyn dynamic.Interface // for sweeping arbitrary kinds, e.g. detaching ArgoCD
 }
 
 // New builds a Client from a kubeconfig path. An empty path uses the standard
@@ -39,13 +41,22 @@ func New(kubeconfig string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build client: %w", err)
 	}
-	return &Client{cs: cs}, nil
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build dynamic client: %w", err)
+	}
+	return &Client{cs: cs, dyn: dyn}, nil
 }
 
-// NewWithInterface wraps an existing clientset. Tests use this with the fake
-// clientset; nothing in production should.
-func NewWithInterface(cs kubernetes.Interface) *Client {
-	return &Client{cs: cs}
+// NewWithInterface wraps existing clients. Tests use this with the fakes;
+// nothing in production should. A nil dynamic client is fine for tests that do
+// not touch DetachArgo.
+func NewWithInterface(cs kubernetes.Interface, dyn ...dynamic.Interface) *Client {
+	c := &Client{cs: cs}
+	if len(dyn) > 0 {
+		c.dyn = dyn[0]
+	}
+	return c
 }
 
 // Workload is the observable state of one Deployment — a single cell in the

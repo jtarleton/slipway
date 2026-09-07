@@ -223,6 +223,32 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// Adopt makes slipway the unambiguous owner of an environment's namespace by
+// stripping any leftover ArgoCD tracking metadata. Safe to run repeatedly; a
+// namespace that was never under ArgoCD is left untouched.
+func (r *Runner) Adopt(ctx context.Context, name string) (err error) {
+	defer r.audit("adopt", name, nil, &err)
+
+	env, err := r.env(name)
+	if err != nil {
+		return err
+	}
+
+	r.say("%s: detaching ArgoCD from %s", name, env.Namespace)
+	n, err := r.Client.DetachArgo(ctx, env.Namespace, func(kind, obj string) {
+		r.say("  cleared %s/%s", kind, obj)
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		r.say("%s: %s carried no ArgoCD metadata — nothing to do", name, env.Namespace)
+	} else {
+		r.say("%s: cleared ArgoCD tracking from %d resource(s); slipway now owns %s", name, n, env.Namespace)
+	}
+	return nil
+}
+
 // Snapshot dumps an environment's database to object storage and records it.
 func (r *Runner) Snapshot(ctx context.Context, name string) (err error) {
 	defer r.audit("snapshot", name, nil, &err)

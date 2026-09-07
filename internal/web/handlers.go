@@ -109,6 +109,17 @@ func (s *server) handlePin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *server) handleAdopt(w http.ResponseWriter, r *http.Request) {
+	env := r.FormValue("env")
+	if env == "" {
+		http.Error(w, "adopt needs env", http.StatusBadRequest)
+		return
+	}
+	s.launch(w, "adopt "+env, deployDeadline, func(ctx context.Context) error {
+		return s.runner.Adopt(ctx, env)
+	})
+}
+
 func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	image := r.FormValue("image")
