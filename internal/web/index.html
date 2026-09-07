@@ -196,13 +196,13 @@
   .tab[aria-selected="true"] .tabcount { background: #dcecf7; color: var(--blue-dark); }
   .panel { display: grid; gap: 24px; }
 
-  /* ---- snapshots, grouped by environment ---- */
-  .snap-group + .snap-group { margin-top: 18px; }
-  .snap-h {
+  /* ---- per-environment groups (snapshots, schedules) ---- */
+  .env-group + .env-group { margin-top: 18px; }
+  .env-h {
     margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--ink);
     text-transform: capitalize; display: flex; align-items: center; gap: 8px;
   }
-  .snap-h .snap-n {
+  .env-h .env-n {
     text-transform: none; font-size: 11px; font-weight: 700; color: var(--dim);
     background: var(--line-2); border-radius: 10px; padding: 0 7px;
   }
@@ -248,6 +248,8 @@
   <nav class="tabs" id="tabs">
     <button class="tab" type="button" data-tab="workflow" aria-selected="true">Workflow</button>
     <button class="tab" type="button" data-tab="databases" aria-selected="false">Databases<span class="tabcount" id="db-count" hidden>0</span></button>
+    <button class="tab" type="button" data-tab="cron" aria-selected="false">Cron<span class="tabcount" id="cron-count" hidden>0</span></button>
+    <button class="tab" type="button" data-tab="releases" aria-selected="false">Releases<span class="tabcount" id="rel-count" hidden>0</span></button>
   </nav>
 
   <div class="panel" id="panel-workflow">
@@ -352,16 +354,6 @@
     <div id="stalled"></div>
   </section>
 
-  <section id="schedules-sec" hidden>
-    <h2>Schedules</h2>
-    <div class="tablewrap"><div id="schedules"></div></div>
-  </section>
-
-  <section id="releases-sec" hidden>
-    <h2>Releases</h2>
-    <div class="tablewrap"><div id="releases"></div></div>
-  </section>
-
   <section id="history-sec" hidden>
     <h2>Operation history</h2>
     <div class="tablewrap"><div id="history"></div></div>
@@ -380,6 +372,22 @@
       <div id="snapshots"><div class="empty">No database snapshots recorded yet.</div></div>
     </section>
   </div><!-- /panel-databases -->
+
+  <div class="panel" id="panel-cron" hidden>
+    <section id="schedules-sec">
+      <h2>Cron schedules</h2>
+      <p class="empty" style="margin:-4px 0 4px">Recurring operations run by <code>slipway serve</code>, grouped by the environment they act on. Add one under <em>Workflow → Manual operations</em>.</p>
+      <div id="schedules"><div class="empty">No schedules yet.</div></div>
+    </section>
+  </div><!-- /panel-cron -->
+
+  <div class="panel" id="panel-releases" hidden>
+    <section id="releases-sec">
+      <h2>Releases</h2>
+      <p class="empty" style="margin:-4px 0 4px">Builds CI has recorded, newest first. <strong>deploy…</strong> picks a target environment.</p>
+      <div id="releases"><div class="empty">No releases recorded yet.</div></div>
+    </section>
+  </div><!-- /panel-releases -->
 </main>
 
 <div class="overlay" id="overlay" hidden>
@@ -402,6 +410,8 @@
   let lastGrid = [];
   let lastJobs = [];
   let lastSnapshots = [];
+  let lastSchedules = [];
+  let lastReleases = [];
   let stalledGroups = new Set();
   const TERMINAL = new Set(["succeeded", "failed", "cancelled", "orphaned"]);
 
@@ -416,7 +426,8 @@
     lastGrid = rows || [];
     envs = lastGrid.map(r => ({ name: r.env, rank: r.rank, prod: r.prod }));
     fillEnvSelects();
-    renderSnapshots(lastSnapshots);   // regroup once env order is known
+    renderSnapshots(lastSnapshots);   // regroup these once env order is known
+    renderSchedules(lastSchedules);
 
     const m = $("matrix");
     if (!lastGrid.length) { m.innerHTML = '<div class="empty">no environments</div>'; return; }
@@ -665,6 +676,17 @@
     await post("/api/cancel", { group });
   });
 
+  // environments in promotion order, plus any extra env referenced in `rows`
+  // that the grid doesn't know about (and "" for rows with no env).
+  function envNames(rows) {
+    const names = envs.slice().sort((a, b) => a.rank - b.rank).map(e => e.name);
+    for (const r of rows) {
+      const e = r.env || "";
+      if (!names.includes(e)) names.push(e);
+    }
+    return names;
+  }
+
   function renderSnapshots(rows) {
     lastSnapshots = rows || [];
     const badge = $("db-count");
@@ -672,19 +694,15 @@
     badge.hidden = lastSnapshots.length === 0;
 
     const el = $("snapshots");
-
-    // one table per environment, in promotion order (dev, stage, prod). Fall
-    // back to whatever envs appear in the rows if the grid hasn't loaded yet.
-    const names = envs.length ? envs.map(e => e.name) : [];
-    for (const s of lastSnapshots) if (!names.includes(s.env)) names.push(s.env);
+    const names = envNames(lastSnapshots);
     if (!names.length || !lastSnapshots.length) {
       el.innerHTML = '<div class="empty">No database snapshots recorded yet.</div>';
       return;
     }
 
     el.innerHTML = names.map(env => {
-      const snaps = lastSnapshots.filter(s => s.env === env);
-      const head = `<h3 class="snap-h">${esc(env)}<span class="snap-n">${
+      const snaps = lastSnapshots.filter(s => (s.env || "") === env);
+      const head = `<h3 class="env-h">${esc(env || "unscoped")}<span class="env-n">${
         snaps.length ? snaps.length + (snaps.length === 1 ? " snapshot" : " snapshots") : "none"
       }</span></h3>`;
       const inner = snaps.length
@@ -698,7 +716,7 @@
                     data-taken="${esc(s.taken)}">restore</button></td>
             </tr>`).join("") + `</tbody></table>`
         : `<div class="empty">No snapshots for ${esc(env)} yet.</div>`;
-      return `<div class="snap-group">${head}<div class="tablewrap">${inner}</div></div>`;
+      return `<div class="env-group">${head}<div class="tablewrap">${inner}</div></div>`;
     }).join("");
   }
   $("snapshots").addEventListener("click", (e) => {
@@ -715,19 +733,24 @@
   });
 
   function renderReleases(rows) {
-    rows = rows || [];
-    $("releases-sec").hidden = rows.length === 0;
-    if (!rows.length) return;
-    $("releases").innerHTML = `<table><thead><tr>
+    lastReleases = rows || [];
+    const badge = $("rel-count");
+    badge.textContent = lastReleases.length;
+    badge.hidden = lastReleases.length === 0;
+    if (!lastReleases.length) {
+      $("releases").innerHTML = '<div class="empty">No releases recorded yet.</div>';
+      return;
+    }
+    $("releases").innerHTML = `<div class="tablewrap"><table><thead><tr>
         <th>Built</th><th>Ref</th><th>SHA</th><th>Image</th><th></th>
-      </tr></thead><tbody>` + rows.map(r => `
+      </tr></thead><tbody>` + lastReleases.map(r => `
         <tr>
           <td class="mono">${esc(r.built)}</td>
           <td>${esc(r.ref)}</td>
           <td class="mono">${esc(r.git_sha)}</td>
           <td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis">${esc(r.image)}</td>
           <td><button class="act" data-deploy-release="${esc(r.ref)}">deploy…</button></td>
-        </tr>`).join("") + `</tbody></table>`;
+        </tr>`).join("") + `</tbody></table></div>`;
   }
   $("releases").addEventListener("click", (e) => {
     const ref = e.target.getAttribute("data-deploy-release");
@@ -746,12 +769,19 @@
   });
 
   function renderSchedules(rows) {
-    rows = rows || [];
-    $("schedules-sec").hidden = rows.length === 0;
-    if (!rows.length) return;
-    $("schedules").innerHTML = `<table><thead><tr>
-        <th>Name</th><th>Does</th><th>Cron</th><th>Next</th><th>Last run</th><th>Status</th><th></th>
-      </tr></thead><tbody>` + rows.map(s => `
+    lastSchedules = rows || [];
+    const badge = $("cron-count");
+    badge.textContent = lastSchedules.length;
+    badge.hidden = lastSchedules.length === 0;
+
+    const el = $("schedules");
+    const names = envNames(lastSchedules);
+    if (!names.length || !lastSchedules.length) {
+      el.innerHTML = '<div class="empty">No schedules yet.</div>';
+      return;
+    }
+
+    const rowHTML = (s) => `
         <tr style="${s.enabled ? '' : 'opacity:.5'}">
           <td>${esc(s.name)}</td>
           <td>${esc(s.what)}</td>
@@ -764,7 +794,20 @@
             <button class="act" data-sched-toggle="${esc(s.name)}" data-to="${!s.enabled}">${s.enabled ? 'disable' : 'enable'}</button>
             <button class="act" data-sched-rm="${esc(s.name)}">remove</button>
           </td>
-        </tr>`).join("") + `</tbody></table>`;
+        </tr>`;
+
+    el.innerHTML = names.map(env => {
+      const scheds = lastSchedules.filter(s => (s.env || "") === env);
+      const head = `<h3 class="env-h">${esc(env || "unscoped")}<span class="env-n">${
+        scheds.length ? scheds.length + (scheds.length === 1 ? " schedule" : " schedules") : "none"
+      }</span></h3>`;
+      const inner = scheds.length
+        ? `<table><thead><tr>
+             <th>Name</th><th>Does</th><th>Cron</th><th>Next</th><th>Last run</th><th>Status</th><th></th>
+           </tr></thead><tbody>` + scheds.map(rowHTML).join("") + `</tbody></table>`
+        : `<div class="empty">No schedules for ${esc(env)} yet.</div>`;
+      return `<div class="env-group">${head}<div class="tablewrap">${inner}</div></div>`;
+    }).join("");
   }
   $("schedules").addEventListener("click", async (e) => {
     const run = e.target.getAttribute("data-sched-run");
@@ -843,7 +886,7 @@
   wireForm("f-schedule", "/api/schedules");
 
   // ---- tabs -----------------------------------------------
-  const TABS = ["workflow", "databases"];
+  const TABS = ["workflow", "databases", "cron", "releases"];
   function showTab(name) {
     if (!TABS.includes(name)) name = "workflow";
     for (const t of TABS) {
@@ -851,11 +894,14 @@
       document.querySelector(`.tab[data-tab="${t}"]`).setAttribute("aria-selected", String(t === name));
     }
     try { localStorage.setItem("slipway.tab", name); } catch (e) {}
+    try { history.replaceState(null, "", "#" + name); } catch (e) {}
   }
   document.querySelectorAll(".tab").forEach(b =>
     b.addEventListener("click", () => showTab(b.dataset.tab)));
+  window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
   let startTab = "workflow";
   try { startTab = localStorage.getItem("slipway.tab") || "workflow"; } catch (e) {}
+  if (TABS.includes(location.hash.slice(1))) startTab = location.hash.slice(1);
   showTab(startTab);
 
   // ---- event stream ----------------------------------------
