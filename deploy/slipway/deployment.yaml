@@ -40,7 +40,7 @@ spec:
         - name: ghcr
       containers:
         - name: slipway
-          image: ghcr.io/jtarleton/slipway@sha256:16c6319220d636c986bf81c1e17ea5df2c599a08993ac2c8b481724cbdc2415b  # :3608efb
+          image: ghcr.io/jtarleton/slipway@sha256:4e03c1f8ba598991beb6943e9ca14f48d99480cac3f858023478fff67eabbc19  # :f67bb96
           args:
             - serve
             - -addr=:8080
