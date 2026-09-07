@@ -20,7 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jtarleton/slipway/internal/drupal"
 	"github.com/jtarleton/slipway/internal/grid"
+	"github.com/jtarleton/slipway/internal/jobs"
+	"github.com/jtarleton/slipway/internal/k8s"
 	"github.com/jtarleton/slipway/internal/ops"
 )
 
@@ -260,15 +263,23 @@ func (s *server) broadcastState() {
 
 // --- view models -----------------------------------------------------------
 
+// gridRow is one environment column of the Acquia-style matrix: its identity,
+// its code cell, and when its database and files were last copied in.
 type gridRow struct {
 	Env       string `json:"env"`
 	Namespace string `json:"namespace"`
 	Host      string `json:"host"`
+	Rank      int    `json:"rank"` // promotion order; the matrix uses it to know "up" from "down"
 	Prod      bool   `json:"prod"`
-	Code      string `json:"code"`
-	Pinned    bool   `json:"pinned"`
-	Replicas  string `json:"replicas"`
-	State     string `json:"state"`
+
+	Code     string `json:"code"`    // short digest for display
+	Pinned   bool   `json:"pinned"`  // spec names a digest, not a tag
+	Promote  string `json:"promote"` // the exact ref a promotion out of this env would deploy ("" if not traceable)
+	Replicas string `json:"replicas"`
+	State    string `json:"state"`
+
+	DBSynced    string `json:"db_synced"`    // when a database was last copied into this env
+	FilesSynced string `json:"files_synced"` // when files were last copied into this env
 }
 
 func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
@@ -276,20 +287,80 @@ func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	dbSync, filesSync, err := s.lastCopies()
+	if err != nil {
+		return nil, err
+	}
+
 	rows := make([]gridRow, 0, len(cells))
 	for _, c := range cells {
 		rows = append(rows, gridRow{
-			Env:       c.Env.Name,
-			Namespace: c.Env.Namespace,
-			Host:      c.Env.IngressHost,
-			Prod:      c.Env.IsProduction,
-			Code:      grid.Code(c.Workload),
-			Pinned:    grid.Pinned(c.Workload),
-			Replicas:  fmt.Sprintf("%d/%d", c.Workload.Ready, c.Workload.Desired),
-			State:     grid.State(c.Workload),
+			Env:         c.Env.Name,
+			Namespace:   c.Env.Namespace,
+			Host:        c.Env.IngressHost,
+			Rank:        c.Env.Rank,
+			Prod:        c.Env.IsProduction,
+			Code:        grid.Code(c.Workload),
+			Pinned:      grid.Pinned(c.Workload),
+			Promote:     promoteRef(c.Workload),
+			Replicas:    fmt.Sprintf("%d/%d", c.Workload.Ready, c.Workload.Desired),
+			State:       grid.State(c.Workload),
+			DBSynced:    dbSync[c.Env.ID],
+			FilesSynced: filesSync[c.Env.ID],
 		})
 	}
 	return rows, nil
+}
+
+// promoteRef is the image a promotion out of this environment would deploy: the
+// digest it is pinned to, or the digest its pods resolved a tag to. Empty when
+// neither is known — a promotion from here would not be traceable to a release,
+// so the matrix does not offer one.
+func promoteRef(w k8s.Workload) string {
+	switch {
+	case !w.Found:
+		return ""
+	case w.Digest != "":
+		return w.Image
+	case w.RunningDigest != "":
+		return k8s.Repository(w.Image) + "@" + w.RunningDigest
+	default:
+		return ""
+	}
+}
+
+// lastCopies reads job history for the most recent successful database restore
+// and files pull into each environment — the "Database last copied" and "Files
+// last copied" lines the Acquia workflow shows under each environment.
+func (s *server) lastCopies() (db, files map[int64]string, err error) {
+	recent, err := s.runner.DB.Recent(200)
+	if err != nil {
+		return nil, nil, err
+	}
+	db, files = map[int64]string{}, map[int64]string{}
+	// Recent is newest-first, so the first hit per environment is the latest.
+	for _, j := range recent {
+		if j.State != jobs.Succeeded {
+			continue
+		}
+		switch j.Kind {
+		case jobs.KindRestore:
+			if _, seen := db[j.EnvID]; !seen {
+				db[j.EnvID] = j.UpdatedAt
+			}
+		case jobs.KindSyncFiles:
+			var p drupal.Params
+			_ = json.Unmarshal(j.Payload, &p)
+			if p.Push { // a push is the source uploading; a pull is the copy landing
+				continue
+			}
+			if _, seen := files[j.EnvID]; !seen {
+				files[j.EnvID] = j.UpdatedAt
+			}
+		}
+	}
+	return db, files, nil
 }
 
 type jobRow struct {

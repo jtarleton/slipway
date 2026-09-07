@@ -22,7 +22,7 @@ required it.
 | `slipway grid` | what is running in every environment, resolved to a digest |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
 | `slipway deploy -env NAME -image REF` | patch and wait for the rollout |
-| `slipway copy-down -from prod -to stage` | files, database, sanitize — in order |
+| `slipway copy-down -from prod -to stage` | files, database, sanitize — in order; `-skip-files` / `-skip-db` for one lane |
 | `slipway resume` | re-attach to work left in flight |
 | `slipway cancel -group NAME` | release a stalled sequence, cancelling the steps wedged behind a failure |
 | `slipway serve` | web UI over the same operations, plus a background reconcile loop |
@@ -36,6 +36,15 @@ snapshots and rollback.
 renders the grid and drives operations, and a loop that reconciles in-flight
 jobs every few seconds — so a sequence started from the CLI, or stranded by a
 crash, finishes without a terminal held open.
+
+The page lays the three artifacts out as an Acquia-style workflow matrix: **Code
+/ Database / Files** down the side, environments across the top. Drag a Code cell
+onto a later environment to deploy the digest it runs; drag a Database or Files
+cell onto an earlier environment to copy it down. Each drop opens a confirm
+dialog, then the operation runs. The Database and Files cells show when data was
+last copied in, read back from job history. Anything the drag gestures don't
+cover — deploying an arbitrary image, `-clean`, `-skip-config-import` — is under
+"Manual operations".
 
 Every operation is the same `internal/ops` call the CLI makes; the server only
 adds a single-flight guard (one operation at a time — copy-down scales a

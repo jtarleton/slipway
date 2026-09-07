@@ -123,9 +123,18 @@ func (s *server) handleCopyDown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skipFiles := r.FormValue("skip_files") == "true"
+	skipDB := r.FormValue("skip_db") == "true"
 	clean := r.FormValue("clean") == "true"
-	s.launch(w, "copy-down "+from+"→"+to, copyDownDeadline, func(ctx context.Context) error {
-		return s.runner.CopyDown(ctx, from, to, skipFiles, clean)
+
+	what := "copy-down"
+	switch {
+	case skipDB:
+		what = "copy files"
+	case skipFiles:
+		what = "copy database"
+	}
+	s.launch(w, what+" "+from+"→"+to, copyDownDeadline, func(ctx context.Context) error {
+		return s.runner.CopyDown(ctx, from, to, skipFiles, skipDB, clean)
 	})
 }
 

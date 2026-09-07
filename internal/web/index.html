@@ -6,160 +6,229 @@
 <title>slipway</title>
 <style>
   :root {
-    --bg: #0f1216; --panel: #171b21; --panel-2: #1e242c; --line: #2a313b;
-    --ink: #d7dde5; --dim: #8a95a3; --accent: #5bc0eb; --ok: #4caf7d;
-    --warn: #d8a657; --bad: #e06c75; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    --navy: #16202d; --bg: #eef1f5; --card: #ffffff;
+    --line: #d7dde5; --line-2: #e6eaef;
+    --ink: #1f2b3a; --dim: #66727f;
+    --blue: #0d6ab0; --blue-dark: #0a568f;
+    --code: #0d6ab0; --data: #b56a1e; --files: #2f8f83;
+    --ok: #2e7d52; --bad: #c0392b; --warn: #b9770e;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+
   header {
-    display: flex; align-items: baseline; gap: 12px;
-    padding: 14px 20px; border-bottom: 1px solid var(--line);
+    background: var(--navy); color: #eef1f5;
+    display: flex; align-items: center; gap: 12px; padding: 12px 22px;
   }
-  header h1 { margin: 0; font-size: 16px; letter-spacing: 0.5px; }
-  header .sub { color: var(--dim); font-size: 12px; }
-  header .conn { margin-left: auto; font-size: 12px; color: var(--dim); }
-  header .conn.up { color: var(--ok); }
-  main { max-width: 1000px; margin: 0 auto; padding: 20px; display: grid; gap: 22px; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.3px; }
+  header .sub { color: #9aa7b4; font-size: 12px; }
+  header .spacer { flex: 1; }
+  header .conn { font-size: 12px; color: #9aa7b4; display: flex; align-items: center; gap: 6px; }
+  header .conn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #6b7785; }
+  header .conn.up { color: #7fd1a8; }
+  header .conn.up::before { background: #4caf7d; }
+  header button {
+    background: transparent; color: #cdd6df; border: 1px solid #33404e;
+    border-radius: 5px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  header button:hover { background: #1e2a38; }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 22px; display: grid; gap: 24px; }
   section > h2 {
-    margin: 0 0 10px; font-size: 12px; text-transform: uppercase;
-    letter-spacing: 1px; color: var(--dim); font-weight: 600;
+    margin: 0 0 12px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--dim); font-weight: 700;
   }
 
-  /* grid */
-  .grid { display: grid; gap: 10px; }
-  .cell {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px 14px; display: grid;
-    grid-template-columns: 120px 1fr auto auto; gap: 12px; align-items: center;
+  /* ---- workflow matrix ---- */
+  .matrix {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    display: grid; grid-template-columns: 108px repeat(var(--cols, 3), 1fr);
+    overflow: hidden;
   }
-  .cell .name { font-weight: 600; }
-  .cell .name .prod { color: var(--warn); font-size: 11px; margin-left: 6px; }
-  .cell .ns { color: var(--dim); font-size: 12px; }
-  .cell .code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
-  .cell .code.loose { color: var(--warn); }
-  .cell .reps { font-family: var(--mono); font-size: 12px; color: var(--dim); }
-  .badge {
-    font-size: 11px; padding: 2px 8px; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  .matrix > div { border-right: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2); padding: 12px 14px; }
+  .matrix > div:nth-child(n + 0):nth-last-child(-n + 4) { border-bottom: 0; }
+  .matrix .rowlabel {
+    background: #f7f9fb; font-size: 12px; font-weight: 700; color: var(--dim);
+    display: flex; align-items: center; text-transform: uppercase; letter-spacing: 0.6px;
   }
-  .badge.healthy { color: var(--ok); border-color: #2e5a45; }
-  .badge.degraded { color: var(--bad); border-color: #5a2e33; }
+  .matrix .corner { background: #f7f9fb; }
+  .matrix .envhead { background: #fbfcfd; }
+  .matrix .envhead .en { font-weight: 700; font-size: 14px; }
+  .matrix .envhead .en .tag {
+    font-size: 10px; font-weight: 700; color: var(--warn); margin-left: 6px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .matrix .envhead .host { color: var(--dim); font-size: 12px; margin-top: 1px; }
+  .matrix .envhead .st { margin-top: 6px; display: inline-flex; gap: 6px; align-items: center; font-size: 11px; }
+  .matrix .envhead .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .matrix .envhead .dot.healthy { background: var(--ok); }
+  .matrix .envhead .dot.degraded { background: var(--bad); }
+  .matrix .envhead .reps { color: var(--dim); font-family: var(--mono); font-size: 11px; }
 
-  /* forms */
-  .ops { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px;
+  .chip {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent, var(--line));
+    border-radius: 6px; padding: 8px 10px; background: #fff; cursor: grab;
+    display: flex; flex-direction: column; gap: 2px; user-select: none;
   }
-  .card h3 { margin: 0 0 10px; font-size: 13px; }
-  .card label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 3px; }
-  .card select, .card input[type=text] {
-    width: 100%; background: var(--panel-2); border: 1px solid var(--line);
-    color: var(--ink); border-radius: 6px; padding: 7px 8px; font: inherit;
+  .chip[data-artifact="code"] { --accent: var(--code); }
+  .chip[data-artifact="database"] { --accent: var(--data); }
+  .chip[data-artifact="files"] { --accent: var(--files); }
+  .chip:active { cursor: grabbing; }
+  .chip.dragging { opacity: 0.4; }
+  .chip .v { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .chip .m { font-size: 11px; color: var(--dim); }
+  .chip .m.loose { color: var(--warn); }
+  .chip .pin {
+    align-self: flex-start; margin-top: 4px; font-size: 11px; color: var(--blue);
+    background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
   }
-  .card .checks { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--dim); }
-  .card .checks label { display: inline-flex; align-items: center; gap: 5px; margin: 0; }
-  button {
-    margin-top: 12px; background: var(--accent); color: #06222e; border: 0;
-    border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer;
-  }
-  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .chip.none { cursor: default; border-left-color: var(--line); }
+  .chip.none .v { color: var(--dim); }
 
-  /* log */
+  /* drag affordances */
+  .matrix.dragging .chip:not(.dragging) { cursor: default; }
+  .matrix[data-target] [data-env] { transition: background 0.1s; }
+  .matrix[data-target="dev"]   [data-env="dev"]:not(.rowlabel),
+  .matrix[data-target="stage"] [data-env="stage"]:not(.rowlabel),
+  .matrix[data-target="prod"]  [data-env="prod"]:not(.rowlabel) { background: #e7f1fa; }
+  .matrix.dragging .envhead.candidate { box-shadow: inset 0 0 0 2px var(--blue); }
+
+  .hint { font-size: 12px; color: var(--dim); margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .hint b { color: var(--ink); font-weight: 600; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+  /* ---- toolbar ---- */
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  .btn {
+    background: var(--blue); color: #fff; border: 0; border-radius: 5px;
+    padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .btn:hover { background: var(--blue-dark); }
+  .btn.ghost { background: #fff; color: var(--blue); border: 1px solid var(--line); }
+  .btn.ghost:hover { background: #f4f8fb; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* ---- modal ---- */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(22, 32, 45, 0.45);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal {
+    background: #fff; border-radius: 10px; width: min(440px, 100%);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25); overflow: hidden;
+  }
+  .modal h3 { margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .modal .body { padding: 18px 20px; display: grid; gap: 10px; }
+  .modal .kv { display: flex; gap: 8px; font-size: 13px; }
+  .modal .kv span:first-child { color: var(--dim); min-width: 74px; }
+  .modal .kv .mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  .modal .note { font-size: 12px; color: var(--dim); background: #f7f9fb; border-radius: 6px; padding: 8px 10px; }
+  .modal label.chk { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink); }
+  .modal .actions { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px; }
+
+  /* ---- manual ops ---- */
+  details.manual { background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+  details.manual > summary { padding: 12px 16px; cursor: pointer; font-weight: 600; font-size: 13px; }
+  details.manual[open] > summary { border-bottom: 1px solid var(--line-2); }
+  .forms { padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .forms .f h4 { margin: 0 0 8px; font-size: 13px; }
+  .forms label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 3px; }
+  .forms select, .forms input[type=text] {
+    width: 100%; border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; font: inherit; background: #fff;
+  }
+  .forms .checks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--dim); }
+  .forms .checks label { display: inline-flex; gap: 5px; align-items: center; margin: 0; }
+
+  /* ---- log ---- */
   .log {
-    background: #0a0d10; border: 1px solid var(--line); border-radius: 8px;
-    padding: 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
-    height: 240px; overflow-y: auto; white-space: pre-wrap;
+    background: #0f1620; color: #cdd6df; border-radius: 8px; padding: 12px 14px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.6; height: 210px;
+    overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--line);
   }
-  .log .t { color: var(--dim); }
-  .log .fail { color: var(--bad); }
-  .running-tag { color: var(--accent); font-size: 12px; margin-left: 8px; }
+  .log:empty::after { content: "idle — no operation running"; color: #66727f; }
+  .log .t { color: #66727f; }
+  .log .fail { color: #ef8a80; }
+  .running-tag { color: var(--blue); font-size: 12px; font-weight: 600; margin-left: 8px; }
 
-  /* jobs */
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-  th { color: var(--dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
-  td.mono { font-family: var(--mono); }
-  .st { text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
-  .st.succeeded { color: var(--ok); }
-  .st.failed, .st.orphaned, .st.cancelled { color: var(--bad); }
-  .st.running, .st.submitted { color: var(--accent); }
-  .st.pending { color: var(--warn); }
-  .st.stalled { color: var(--bad); }
-  .empty { color: var(--dim); font-size: 12px; padding: 8px 2px; }
-
-  /* stalled sequences */
+  /* ---- stalls ---- */
   .stall {
-    background: var(--panel); border: 1px solid #5a2e33; border-radius: 8px;
-    padding: 12px 14px; margin-bottom: 10px;
+    background: #fff; border: 1px solid #e6c3bd; border-left: 3px solid var(--bad);
+    border-radius: 6px; padding: 11px 14px; margin-bottom: 10px;
     display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
   }
   .stall .grp { font-family: var(--mono); font-size: 12px; }
   .stall .why { color: var(--dim); font-size: 12px; margin-top: 3px; }
   .stall .why b { color: var(--bad); font-weight: 600; }
-  .stall button { margin: 0; background: transparent; color: var(--bad); border: 1px solid #5a2e33; }
+
+  /* ---- jobs table ---- */
+  .tablewrap { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  th { color: var(--dim); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.8px; }
+  tr:last-child td { border-bottom: 0; }
+  td.mono { font-family: var(--mono); }
+  .st { text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; font-weight: 700; }
+  .st.succeeded { color: var(--ok); }
+  .st.failed, .st.orphaned, .st.stalled { color: var(--bad); }
+  .st.running, .st.submitted { color: var(--blue); }
+  .st.pending { color: var(--warn); }
+  .st.cancelled { color: var(--dim); }
+  .empty { color: var(--dim); font-size: 12px; padding: 12px 14px; }
 </style>
 </head>
 <body>
 <header>
   <h1>slipway</h1>
   <span class="sub">deployment control plane</span>
+  <span class="spacer"></span>
+  <button id="resume-btn" type="button">Resume in-flight</button>
   <span class="conn" id="conn">connecting…</span>
 </header>
 
 <main>
   <section>
-    <h2>Grid</h2>
-    <div class="grid" id="grid"><div class="empty">reading cluster…</div></div>
+    <h2>Workflow <span class="running-tag" id="running"></span></h2>
+    <div class="matrix" id="matrix"><div class="empty">reading cluster…</div></div>
+    <div class="hint">
+      <span><span class="swatch" style="background:var(--code)"></span><b>Code</b> — drag onto a later environment to deploy it there</span>
+      <span><span class="swatch" style="background:var(--data)"></span><b>Database</b> · <span class="swatch" style="background:var(--files)"></span><b>Files</b> — drag onto an earlier environment to copy down</span>
+    </div>
   </section>
 
   <section>
-    <h2>Operations <span class="running-tag" id="running"></span></h2>
-    <div class="ops">
-      <form class="card" id="f-deploy">
-        <h3>Deploy</h3>
-        <label>Environment</label>
-        <select name="env" data-envs></select>
-        <label>Image reference</label>
-        <input type="text" name="image" placeholder="registry/drupal@sha256:…" autocomplete="off">
-        <div class="checks">
-          <label><input type="checkbox" name="skip_update" value="true"> skip update hooks</label>
-          <label><input type="checkbox" name="skip_config_import" value="true"> skip config:import</label>
-        </div>
-        <button type="submit">Deploy</button>
-      </form>
-
-      <form class="card" id="f-copydown">
-        <h3>Copy down</h3>
-        <label>From</label>
-        <select name="from" data-envs></select>
-        <label>To</label>
-        <select name="to" data-envs data-nonprod></select>
-        <div class="checks">
-          <label><input type="checkbox" name="skip_files" value="true"> database only</label>
-          <label><input type="checkbox" name="clean" value="true"> clean target tree (first seed)</label>
-        </div>
-        <button type="submit">Copy down</button>
-      </form>
-
-      <form class="card" id="f-pin">
-        <h3>Pin</h3>
-        <p class="empty">Rewrite a tag-pinned Deployment to the digest it is already running.</p>
-        <label>Environment</label>
-        <select name="env" data-envs></select>
-        <button type="submit" class="ghost">Pin</button>
-      </form>
-
-      <form class="card" id="f-resume">
-        <h3>Resume</h3>
-        <p class="empty">Re-attach to work left in flight and drive it to completion.</p>
-        <button type="submit" class="ghost">Resume</button>
-      </form>
-    </div>
+    <details class="manual">
+      <summary>Manual operations</summary>
+      <div class="forms">
+        <form class="f" id="f-deploy">
+          <h4>Deploy a specific image</h4>
+          <label>Environment</label>
+          <select name="env" data-envs></select>
+          <label>Image reference</label>
+          <input type="text" name="image" placeholder="registry/drupal@sha256:…" autocomplete="off">
+          <div class="checks">
+            <label><input type="checkbox" name="skip_update" value="true"> skip update hooks</label>
+            <label><input type="checkbox" name="skip_config_import" value="true"> skip config:import</label>
+          </div>
+          <button class="btn" type="submit" style="margin-top:12px">Deploy</button>
+        </form>
+        <form class="f" id="f-copydown">
+          <h4>Copy down (all options)</h4>
+          <label>From</label>
+          <select name="from" data-envs></select>
+          <label>To</label>
+          <select name="to" data-envs data-nonprod></select>
+          <div class="checks">
+            <label><input type="checkbox" name="skip_files" value="true"> database only</label>
+            <label><input type="checkbox" name="skip_db" value="true"> files only</label>
+            <label><input type="checkbox" name="clean" value="true"> clean target tree</label>
+          </div>
+          <button class="btn" type="submit" style="margin-top:12px">Copy down</button>
+        </form>
+      </div>
+    </details>
   </section>
 
   <section>
@@ -174,42 +243,204 @@
 
   <section>
     <h2>Recent jobs</h2>
-    <div id="jobs"><div class="empty">no jobs yet</div></div>
+    <div class="tablewrap"><div id="jobs"><div class="empty">no jobs yet</div></div></div>
   </section>
 </main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="modal">
+    <h3 id="m-title">Confirm</h3>
+    <div class="body" id="m-body"></div>
+    <div class="actions">
+      <button class="btn ghost" id="m-cancel" type="button">Cancel</button>
+      <button class="btn" id="m-confirm" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
-  let envs = [];
+  let envs = [];          // [{name, rank, prod}]
   let running = false;
+  let lastGrid = [];
   let lastJobs = [];
   let stalledGroups = new Set();
-
-  // --- rendering ----------------------------------------------------------
-  function renderGrid(rows) {
-    envs = rows.map(r => ({ name: r.env, prod: r.prod }));
-    fillEnvSelects();
-    const el = $("grid");
-    if (!rows.length) { el.innerHTML = '<div class="empty">no environments</div>'; return; }
-    el.innerHTML = rows.map(r => `
-      <div class="cell">
-        <div>
-          <div class="name">${esc(r.env)}${r.prod ? '<span class="prod">prod</span>' : ''}</div>
-          <div class="ns">${esc(r.namespace)}</div>
-        </div>
-        <div class="code ${r.pinned ? '' : 'loose'}">${esc(r.code)}</div>
-        <div class="reps">${esc(r.replicas)}</div>
-        <div class="badge ${cls(r.state)}">${esc(r.state)}</div>
-      </div>`).join("");
-  }
-
   const TERMINAL = new Set(["succeeded", "failed", "cancelled", "orphaned"]);
 
-  function renderJobs(rows) {
-    lastJobs = rows || [];
-    paintJobs();
+  // ---- matrix ----------------------------------------------------------
+  const ARTIFACTS = [
+    { key: "code", label: "Code" },
+    { key: "database", label: "Database" },
+    { key: "files", label: "Files" },
+  ];
+
+  function renderGrid(rows) {
+    lastGrid = rows || [];
+    envs = lastGrid.map(r => ({ name: r.env, rank: r.rank, prod: r.prod }));
+    fillEnvSelects();
+
+    const m = $("matrix");
+    if (!lastGrid.length) { m.innerHTML = '<div class="empty">no environments</div>'; return; }
+    m.style.setProperty("--cols", lastGrid.length);
+
+    let html = '<div class="corner"></div>';
+    for (const r of lastGrid) {
+      html += `<div class="envhead" data-env="${esc(r.env)}" data-rank="${r.rank}">
+        <div class="en">${esc(r.env)}${r.prod ? '<span class="tag">prod</span>' : ''}</div>
+        <div class="host">${esc(r.host)}</div>
+        <div class="st"><span class="dot ${esc(cls(r.state))}"></span>${esc(r.state)}
+          <span class="reps">${esc(r.replicas)}</span></div>
+      </div>`;
+    }
+    for (const a of ARTIFACTS) {
+      html += `<div class="rowlabel" data-env="">${a.label}</div>`;
+      for (const r of lastGrid) html += cell(a.key, r);
+    }
+    m.innerHTML = html;
+    wireDrag();
+    paintJobsIntoMatrix();
   }
+
+  function cell(artifact, r) {
+    const attrs = `data-env="${esc(r.env)}" data-rank="${r.rank}"`;
+    if (artifact === "code") {
+      const canDrag = !!r.promote && !running;
+      return `<div ${attrs}>
+        <div class="chip" data-artifact="code" data-env="${esc(r.env)}" data-rank="${r.rank}"
+             data-promote="${esc(r.promote)}" draggable="${canDrag}">
+          <span class="v">${esc(r.code)}</span>
+          <span class="m ${r.pinned ? '' : 'loose'}">${r.pinned ? 'pinned' : 'tag — not traceable'}</span>
+          ${r.pinned ? '' : `<button class="pin" data-pin="${esc(r.env)}">pin to running digest</button>`}
+        </div></div>`;
+    }
+    const when = artifact === "database" ? r.db_synced : r.files_synced;
+    if (r.prod) {
+      return `<div ${attrs}><div class="chip ${when ? '' : 'none'}" data-artifact="${artifact}"
+        data-env="${esc(r.env)}" data-rank="${r.rank}" draggable="${!running}">
+        <span class="v">source of record</span>
+        <span class="m">drag to an earlier env</span></div></div>`;
+    }
+    return `<div ${attrs}><div class="chip none" data-artifact="${artifact}"
+      data-env="${esc(r.env)}" data-rank="${r.rank}" draggable="false">
+      <span class="v">${when ? 'copied' : 'not copied'}</span>
+      <span class="m">${when ? esc(fmtWhen(when)) : '—'}</span></div></div>`;
+  }
+
+  // ---- drag & drop ----------------------------------------------------
+  let drag = null; // {artifact, env, rank, promote}
+
+  function wireDrag() {
+    const m = $("matrix");
+    m.querySelectorAll(".chip[draggable=true]").forEach(chip => {
+      chip.addEventListener("dragstart", (e) => {
+        drag = {
+          artifact: chip.dataset.artifact, env: chip.dataset.env,
+          rank: +chip.dataset.rank, promote: chip.dataset.promote || "",
+        };
+        chip.classList.add("dragging");
+        m.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", drag.env);
+        markCandidates();
+      });
+      chip.addEventListener("dragend", () => {
+        chip.classList.remove("dragging");
+        m.classList.remove("dragging");
+        m.removeAttribute("data-target");
+        m.querySelectorAll(".candidate").forEach(el => el.classList.remove("candidate"));
+        drag = null;
+      });
+    });
+
+    m.addEventListener("dragover", (e) => {
+      if (!drag) return;
+      const host = e.target.closest("[data-env]");
+      const env = host && host.dataset.env;
+      if (env && isValidTarget(env)) { e.preventDefault(); m.setAttribute("data-target", env); }
+      else m.removeAttribute("data-target");
+    });
+    m.addEventListener("drop", (e) => {
+      if (!drag) return;
+      const host = e.target.closest("[data-env]");
+      const env = host && host.dataset.env;
+      if (env && isValidTarget(env)) { e.preventDefault(); openConfirm(drag, env); }
+    });
+  }
+
+  function markCandidates() {
+    $("matrix").querySelectorAll(".envhead").forEach(h => {
+      if (isValidTarget(h.dataset.env)) h.classList.add("candidate");
+    });
+  }
+
+  function isValidTarget(env) {
+    if (!drag) return false;
+    const t = envs.find(e => e.name === env);
+    if (!t || env === drag.env) return false;
+    if (drag.artifact === "code") return t.rank > drag.rank && !!drag.promote;
+    return t.rank < drag.rank && !t.prod; // database / files copy down, never into prod
+  }
+
+  // ---- confirm modal -------------------------------------------------
+  function openConfirm(d, target) {
+    const body = $("m-body");
+    let title, rows, extra = "", run;
+
+    if (d.artifact === "code") {
+      title = `Deploy code to ${target}`;
+      rows = [["From", d.env], ["To", target], ["Image", `<span class="mono">${esc(d.promote)}</span>`]];
+      extra = `
+        <label class="chk"><input type="checkbox" id="o-skipupd"> skip update hooks</label>
+        <label class="chk"><input type="checkbox" id="o-skipcfg"> skip config:import</label>`;
+      run = () => post("/api/deploy", {
+        env: target, image: d.promote,
+        skip_update: $("o-skipupd").checked, skip_config_import: $("o-skipcfg").checked,
+      });
+    } else if (d.artifact === "database") {
+      title = `Copy database to ${target}`;
+      rows = [["From", d.env], ["To", target]];
+      extra = `<div class="note">The copy is sanitized on arrival — <span class="mono">drush sql:sanitize</span>
+        scrubs core user and session data. Custom tables are not touched.</div>`;
+      run = () => post("/api/copy-down", { from: d.env, to: target, skip_files: true });
+    } else {
+      title = `Copy files to ${target}`;
+      rows = [["From", d.env], ["To", target]];
+      extra = `<label class="chk"><input type="checkbox" id="o-clean"> empty the target file tree first (first seed only)</label>`;
+      run = () => post("/api/copy-down", { from: d.env, to: target, skip_db: true, clean: $("o-clean").checked });
+    }
+
+    $("m-title").textContent = title;
+    body.innerHTML = rows.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span class="mono">${v}</span></div>`).join("") + extra;
+    $("overlay").hidden = false;
+    $("m-confirm").onclick = () => { const go = run; closeModal(); go(); };
+  }
+  function closeModal() { $("overlay").hidden = true; }
+  $("m-cancel").onclick = closeModal;
+  $("overlay").addEventListener("click", (e) => { if (e.target === $("overlay")) closeModal(); });
+
+  async function post(path, fields) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) {
+      const val = typeof v === "function" ? v() : v;
+      if (val === false || val == null) continue;
+      body.append(k, val === true ? "true" : String(val));
+    }
+    const res = await fetch(path, { method: "POST", body });
+    const msg = (await res.text()).trim();
+    if (!res.ok) appendLog({ line: "! " + msg, at: now() });
+  }
+
+  // ---- pin ---------------------------------------------------------
+  $("matrix").addEventListener("click", (e) => {
+    const env = e.target.getAttribute && e.target.getAttribute("data-pin");
+    if (!env || running) return;
+    post("/api/pin", { env });
+  });
+  $("resume-btn").addEventListener("click", () => post("/api/resume", {}));
+
+  // ---- jobs & stalls --------------------------------------------
+  function renderJobs(rows) { lastJobs = rows || []; paintJobs(); }
 
   function paintJobs() {
     const el = $("jobs");
@@ -217,43 +448,48 @@
     el.innerHTML = `<table><thead><tr>
         <th>Updated</th><th>Env</th><th>Group</th><th>Seq</th><th>Kind</th><th>State</th><th>Reason</th>
       </tr></thead><tbody>` + lastJobs.map(j => {
-        // A non-terminal step whose group is stalled is stuck, not pending.
         const stuck = stalledGroups.has(j.group) && !TERMINAL.has(j.state);
         const shown = stuck ? "stalled" : j.state;
-        return `
-        <tr>
-          <td class="mono">${esc(j.updated)}</td>
-          <td>${esc(j.env)}</td>
-          <td class="mono">${esc(j.group)}</td>
-          <td class="mono">${j.seq}</td>
-          <td>${esc(j.kind)}</td>
-          <td class="st ${esc(shown)}">${esc(shown)}</td>
-          <td>${esc(j.reason)}</td>
-        </tr>`;
+        return `<tr>
+          <td class="mono">${esc(j.updated)}</td><td>${esc(j.env)}</td>
+          <td class="mono">${esc(j.group)}</td><td class="mono">${j.seq}</td>
+          <td>${esc(j.kind)}</td><td class="st ${esc(shown)}">${esc(shown)}</td>
+          <td>${esc(j.reason)}</td></tr>`;
       }).join("") + `</tbody></table>`;
   }
+
+  function paintJobsIntoMatrix() { /* reserved: could badge cells with in-flight ops */ }
 
   function renderStalls(rows) {
     rows = rows || [];
     stalledGroups = new Set(rows.map(s => s.group));
-    const sec = $("stalled-sec");
-    sec.hidden = rows.length === 0;
+    $("stalled-sec").hidden = rows.length === 0;
     $("stalled").innerHTML = rows.map(s => `
       <div class="stall">
         <div>
           <div class="grp">${esc(s.group)}</div>
-          <div class="why">${esc(s.env)} · blocked at seq ${s.seq} <b>${esc(s.kind)} ${esc(s.state)}</b>${
-            s.reason ? " — " + esc(s.reason) : ""} · ${s.waiting} step${s.waiting === 1 ? "" : "s"} waiting</div>
+          <div class="why">${esc(s.env)} · blocked at seq ${s.seq}
+            <b>${esc(s.kind)} ${esc(s.state)}</b>${s.reason ? " — " + esc(s.reason) : ""} ·
+            ${s.waiting} step${s.waiting === 1 ? "" : "s"} waiting</div>
         </div>
-        <button data-cancel="${esc(s.group)}">Cancel sequence</button>
+        <button class="btn ghost" data-cancel="${esc(s.group)}">Cancel sequence</button>
       </div>`).join("");
     paintJobs();
   }
+  $("stalled").addEventListener("click", async (e) => {
+    const group = e.target.getAttribute("data-cancel");
+    if (!group) return;
+    e.target.disabled = true;
+    await post("/api/cancel", { group });
+  });
 
+  // ---- state / log --------------------------------------------
   function setState(st) {
     running = !!st.running;
     $("running").textContent = running ? "▶ " + (st.operation || "running") : "";
-    document.querySelectorAll("form button").forEach(b => b.disabled = running);
+    document.querySelectorAll("form .btn, #resume-btn").forEach(b => b.disabled = running);
+    // re-render the matrix so draggability reflects the run state
+    if (lastGrid.length) renderGrid(lastGrid);
     const log = $("log");
     log.innerHTML = "";
     (st.log || []).forEach(line => appendLog({ line, at: "" }));
@@ -269,43 +505,28 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  // --- forms ------------------------------------------------------------
+  // ---- manual forms -----------------------------------------
   function fillEnvSelects() {
     document.querySelectorAll("select[data-envs]").forEach(sel => {
       const nonprod = sel.hasAttribute("data-nonprod");
       const prev = sel.value;
-      sel.innerHTML = envs
-        .filter(e => !nonprod || !e.prod)
+      sel.innerHTML = envs.filter(e => !nonprod || !e.prod)
         .map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join("");
       if (prev) sel.value = prev;
     });
   }
-
   function wireForm(id, path) {
     $(id).addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const body = new URLSearchParams();
-      new FormData(ev.target).forEach((v, k) => body.append(k, v));
-      const res = await fetch(path, { method: "POST", body });
-      if (!res.ok) appendLog({ line: "! " + (await res.text()).trim(), at: now() });
+      const fields = {};
+      new FormData(ev.target).forEach((v, k) => { fields[k] = v; });
+      await post(path, fields);
     });
   }
   wireForm("f-deploy", "/api/deploy");
   wireForm("f-copydown", "/api/copy-down");
-  wireForm("f-pin", "/api/pin");
-  wireForm("f-resume", "/api/resume");
 
-  $("stalled").addEventListener("click", async (ev) => {
-    const group = ev.target.getAttribute("data-cancel");
-    if (!group) return;
-    ev.target.disabled = true;
-    const body = new URLSearchParams({ group });
-    const res = await fetch("/api/cancel", { method: "POST", body });
-    const msg = (await res.text()).trim();
-    appendLog({ line: (res.ok ? "" : "! ") + msg, at: now() });
-  });
-
-  // --- event stream ---------------------------------------------------
+  // ---- event stream ----------------------------------------
   function connect() {
     const es = new EventSource("/events");
     es.addEventListener("open", () => { $("conn").textContent = "live"; $("conn").classList.add("up"); });
@@ -318,13 +539,18 @@
   }
   connect();
 
-  // --- utils --------------------------------------------------------
+  // ---- utils ---------------------------------------------
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
       { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
   function cls(state) { return state === "healthy" ? "healthy" : state === "degraded" ? "degraded" : ""; }
   function now() { return new Date().toTimeString().slice(0, 8); }
+  function fmtWhen(s) {
+    // s is "YYYY-MM-DD HH:MM:SS" (UTC from SQLite); show date + short time
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s || "");
+    return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]} UTC` : s;
+  }
 })();
 </script>
 </body>

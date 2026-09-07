@@ -141,13 +141,20 @@ func (r *Runner) runUpdate(ctx context.Context, env store.Environment, image str
 	return nil
 }
 
-// CopyDown moves a database and the app volume from one environment to another.
+// CopyDown moves the database, the app volume, or both from one environment down
+// to another.
 //
-// The sequence is fixed and ordered: push the source's files to object storage,
-// pull them into the target, stream the database across, then sanitize. Nothing
-// runs until its predecessor has succeeded, so a failed load can never be
-// followed by a sanitize that makes the result look deliberate.
-func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, clean bool) error {
+// The full sequence is fixed and ordered: push the source's files to object
+// storage, pull them into the target, stream the database across, then sanitize.
+// Nothing runs until its predecessor has succeeded, so a failed load can never
+// be followed by a sanitize that makes the result look deliberate. skipFiles
+// drops the two file steps; skipDB drops the restore and the sanitize — the
+// Acquia workflow's separate "drag Database" and "drag Files" gestures land
+// here as one of those two subsets.
+func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, skipDB, clean bool) error {
+	if skipFiles && skipDB {
+		return fmt.Errorf("copy-down with nothing to copy: both files and database skipped")
+	}
 	src, err := r.env(from)
 	if err != nil {
 		return err
@@ -167,7 +174,7 @@ func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, clean
 		return err
 	}
 	image := wl.Image
-	if image == "" {
+	if image == "" && !skipDB {
 		return fmt.Errorf("%s has no %s deployment to take an image from", dst.Name, r.Workload)
 	}
 
@@ -187,10 +194,12 @@ func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, clean
 			step{dst, jobs.KindSyncFiles, drupal.Params{ObjectKey: key, Clean: clean}},
 		)
 	}
-	steps = append(steps,
-		step{dst, jobs.KindRestore, drupal.Params{SourceNamespace: src.Namespace}},
-		step{dst, jobs.KindSanitize, drupal.Params{DrupalImage: image}},
-	)
+	if !skipDB {
+		steps = append(steps,
+			step{dst, jobs.KindRestore, drupal.Params{SourceNamespace: src.Namespace}},
+			step{dst, jobs.KindSanitize, drupal.Params{DrupalImage: image}},
+		)
+	}
 
 	for i, step := range steps {
 		payload, err := step.params.Encode()

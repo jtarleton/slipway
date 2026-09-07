@@ -94,6 +94,75 @@ func TestGridEndpoint(t *testing.T) {
 	if rows[0].Pinned {
 		t.Errorf("dev row = %+v, want not pinned", rows[0])
 	}
+
+	// A digest-pinned env exposes exactly that ref for promotion; a tag-only env
+	// with no resolvable running digest offers nothing.
+	if rows[1].Promote != "reg/d@sha256:"+strings.Repeat("a", 64) {
+		t.Errorf("prod promote ref = %q, want the pinned image", rows[1].Promote)
+	}
+	if rows[0].Promote != "" {
+		t.Errorf("dev promote ref = %q, want empty (not traceable)", rows[0].Promote)
+	}
+	if rows[0].Rank == 0 || rows[1].Rank <= rows[0].Rank {
+		t.Errorf("ranks not ordered: dev=%d prod=%d", rows[0].Rank, rows[1].Rank)
+	}
+}
+
+func TestGridReportsWhenDataWasLastCopiedIn(t *testing.T) {
+	s := testServer(t)
+	envs, _ := s.runner.DB.Environments()
+	dev := envs[0]
+
+	// A succeeded restore and a succeeded files pull into dev.
+	filesPull, _ := drupal.Params{ObjectKey: "s3://x", Push: false}.Encode()
+	for _, seed := range []struct {
+		kind    jobs.Kind
+		payload []byte
+	}{
+		{jobs.KindRestore, nil},
+		{jobs.KindSyncFiles, filesPull},
+	} {
+		id, err := s.runner.DB.CreateJob(store.Job{
+			EnvID: dev.ID, GroupID: "g", Seq: 0, Kind: seed.kind,
+			K8sJobName: jobs.Name("dev", 42, int(seed.kind[0]), seed.kind), Payload: seed.payload,
+		})
+		if err != nil {
+			t.Fatalf("seed %s: %v", seed.kind, err)
+		}
+		if err := s.runner.DB.Advance(id, jobs.Pending, jobs.Succeeded, "ok"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := s.gridRows(context.Background())
+	if err != nil {
+		t.Fatalf("gridRows: %v", err)
+	}
+	if rows[0].DBSynced == "" || rows[0].FilesSynced == "" {
+		t.Errorf("dev row = %+v, want both sync times populated", rows[0])
+	}
+	if rows[1].DBSynced != "" {
+		t.Errorf("prod row = %+v, want no sync time", rows[1])
+	}
+}
+
+func TestCopyDownRejectsCopyingNothing(t *testing.T) {
+	s := testServer(t)
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/copy-down", "from=prod&to=dev&skip_db=true&skip_files=true"))
+	// The guard fires inside the operation goroutine, so the request is
+	// accepted and the failure lands in the log.
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	waitFor(t, func() bool {
+		for _, l := range s.stateView().Log {
+			if strings.Contains(l, "nothing to copy") {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func TestIndexServed(t *testing.T) {

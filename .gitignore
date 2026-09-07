@@ -1,7 +1,7 @@
 # Build output
 /bin/
 /dist/
-slipway
+/slipway
 
 # Local state — the control plane's SQLite store
 *.db
