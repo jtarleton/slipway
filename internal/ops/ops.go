@@ -232,6 +232,37 @@ func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, clean
 	return r.watch(ctx, dst.Namespace)
 }
 
+// Cancel releases a stalled sequence by marking its unfinished steps cancelled.
+//
+// This is a bookkeeping operation — it touches only the control-plane store,
+// not the cluster. The failed step that stalled the group stays as it is; what
+// changes is that the steps waiting behind it stop being offered to the engine
+// and stop making `resume` report a failure.
+func (r *Runner) Cancel(ctx context.Context, group string) error {
+	stalls, err := r.DB.Stalls()
+	if err != nil {
+		return err
+	}
+	var stall *store.Stall
+	for i := range stalls {
+		if stalls[i].GroupID == group {
+			stall = &stalls[i]
+			break
+		}
+	}
+	if stall == nil {
+		return fmt.Errorf("%s is not a stalled sequence", group)
+	}
+
+	n, err := r.DB.CancelGroup(group)
+	if err != nil {
+		return err
+	}
+	r.say("%s: cancelled %d step(s) stalled behind %s (seq %d): %s",
+		group, n, stall.BlockedByKind, stall.BlockedBySeq, stall.BlockedByReason)
+	return nil
+}
+
 // Resume drives whatever is already queued. Running it after the control plane
 // dies mid-operation is the whole point of keeping work in Kubernetes Jobs.
 func (r *Runner) Resume(ctx context.Context) error {

@@ -89,7 +89,19 @@
   .st.failed, .st.orphaned, .st.cancelled { color: var(--bad); }
   .st.running, .st.submitted { color: var(--accent); }
   .st.pending { color: var(--warn); }
+  .st.stalled { color: var(--bad); }
   .empty { color: var(--dim); font-size: 12px; padding: 8px 2px; }
+
+  /* stalled sequences */
+  .stall {
+    background: var(--panel); border: 1px solid #5a2e33; border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px;
+    display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+  }
+  .stall .grp { font-family: var(--mono); font-size: 12px; }
+  .stall .why { color: var(--dim); font-size: 12px; margin-top: 3px; }
+  .stall .why b { color: var(--bad); font-weight: 600; }
+  .stall button { margin: 0; background: transparent; color: var(--bad); border: 1px solid #5a2e33; }
 </style>
 </head>
 <body>
@@ -155,6 +167,11 @@
     <div class="log" id="log"></div>
   </section>
 
+  <section id="stalled-sec" hidden>
+    <h2>Stalled sequences</h2>
+    <div id="stalled"></div>
+  </section>
+
   <section>
     <h2>Recent jobs</h2>
     <div id="jobs"><div class="empty">no jobs yet</div></div>
@@ -166,6 +183,8 @@
   const $ = (id) => document.getElementById(id);
   let envs = [];
   let running = false;
+  let lastJobs = [];
+  let stalledGroups = new Set();
 
   // --- rendering ----------------------------------------------------------
   function renderGrid(rows) {
@@ -185,21 +204,50 @@
       </div>`).join("");
   }
 
+  const TERMINAL = new Set(["succeeded", "failed", "cancelled", "orphaned"]);
+
   function renderJobs(rows) {
+    lastJobs = rows || [];
+    paintJobs();
+  }
+
+  function paintJobs() {
     const el = $("jobs");
-    if (!rows || !rows.length) { el.innerHTML = '<div class="empty">no jobs yet</div>'; return; }
+    if (!lastJobs.length) { el.innerHTML = '<div class="empty">no jobs yet</div>'; return; }
     el.innerHTML = `<table><thead><tr>
         <th>Updated</th><th>Env</th><th>Group</th><th>Seq</th><th>Kind</th><th>State</th><th>Reason</th>
-      </tr></thead><tbody>` + rows.map(j => `
+      </tr></thead><tbody>` + lastJobs.map(j => {
+        // A non-terminal step whose group is stalled is stuck, not pending.
+        const stuck = stalledGroups.has(j.group) && !TERMINAL.has(j.state);
+        const shown = stuck ? "stalled" : j.state;
+        return `
         <tr>
           <td class="mono">${esc(j.updated)}</td>
           <td>${esc(j.env)}</td>
           <td class="mono">${esc(j.group)}</td>
           <td class="mono">${j.seq}</td>
           <td>${esc(j.kind)}</td>
-          <td class="st ${esc(j.state)}">${esc(j.state)}</td>
+          <td class="st ${esc(shown)}">${esc(shown)}</td>
           <td>${esc(j.reason)}</td>
-        </tr>`).join("") + `</tbody></table>`;
+        </tr>`;
+      }).join("") + `</tbody></table>`;
+  }
+
+  function renderStalls(rows) {
+    rows = rows || [];
+    stalledGroups = new Set(rows.map(s => s.group));
+    const sec = $("stalled-sec");
+    sec.hidden = rows.length === 0;
+    $("stalled").innerHTML = rows.map(s => `
+      <div class="stall">
+        <div>
+          <div class="grp">${esc(s.group)}</div>
+          <div class="why">${esc(s.env)} · blocked at seq ${s.seq} <b>${esc(s.kind)} ${esc(s.state)}</b>${
+            s.reason ? " — " + esc(s.reason) : ""} · ${s.waiting} step${s.waiting === 1 ? "" : "s"} waiting</div>
+        </div>
+        <button data-cancel="${esc(s.group)}">Cancel sequence</button>
+      </div>`).join("");
+    paintJobs();
   }
 
   function setState(st) {
@@ -247,6 +295,16 @@
   wireForm("f-pin", "/api/pin");
   wireForm("f-resume", "/api/resume");
 
+  $("stalled").addEventListener("click", async (ev) => {
+    const group = ev.target.getAttribute("data-cancel");
+    if (!group) return;
+    ev.target.disabled = true;
+    const body = new URLSearchParams({ group });
+    const res = await fetch("/api/cancel", { method: "POST", body });
+    const msg = (await res.text()).trim();
+    appendLog({ line: (res.ok ? "" : "! ") + msg, at: now() });
+  });
+
   // --- event stream ---------------------------------------------------
   function connect() {
     const es = new EventSource("/events");
@@ -254,6 +312,7 @@
     es.addEventListener("error", () => { $("conn").textContent = "reconnecting…"; $("conn").classList.remove("up"); });
     es.addEventListener("grid", (e) => renderGrid(JSON.parse(e.data)));
     es.addEventListener("jobs", (e) => renderJobs(JSON.parse(e.data)));
+    es.addEventListener("stalled", (e) => renderStalls(JSON.parse(e.data)));
     es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
     es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));
   }

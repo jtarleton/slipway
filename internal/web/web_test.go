@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jtarleton/slipway/internal/drupal"
+	"github.com/jtarleton/slipway/internal/jobs"
 	"github.com/jtarleton/slipway/internal/k8s"
 	"github.com/jtarleton/slipway/internal/ops"
 	"github.com/jtarleton/slipway/internal/store"
@@ -175,6 +176,78 @@ func TestEventStreamSendsAnOpeningSnapshot(t *testing.T) {
 			t.Errorf("opening snapshot missing %q; got:\n%s", want, got)
 		}
 	}
+}
+
+// stallGroup seeds a three-step sequence whose middle step failed, leaving the
+// last step wedged — the shape the "Stalled sequences" panel exists to show.
+func stallGroup(t *testing.T, db *store.DB, group string) {
+	t.Helper()
+	envs, _ := db.Environments()
+	envID := envs[0].ID
+	kinds := []jobs.Kind{jobs.KindSyncFiles, jobs.KindRestore, jobs.KindSanitize}
+	var ids []int64
+	for i, k := range kinds {
+		id, err := db.CreateJob(store.Job{
+			EnvID: envID, GroupID: group, Seq: i, Kind: k,
+			K8sJobName: jobs.Name(group, 1, i, k),
+		})
+		if err != nil {
+			t.Fatalf("seed job: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := db.Advance(ids[0], jobs.Pending, jobs.Succeeded, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Advance(ids[1], jobs.Pending, jobs.Failed, "dump died"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStalledSequenceIsStreamedAndCancellable(t *testing.T) {
+	s := testServer(t)
+	stallGroup(t, s.runner.DB, "copy-down-prod-dev-1")
+
+	srv := httptest.NewServer(mux(s))
+	defer srv.Close()
+
+	// The opening SSE snapshot carries the stall.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	buf := make([]byte, 8192)
+	n, _ := resp.Body.Read(buf)
+	resp.Body.Close()
+	if got := string(buf[:n]); !strings.Contains(got, "event: stalled") || !strings.Contains(got, "copy-down-prod-dev-1") {
+		t.Fatalf("opening snapshot missing the stall:\n%s", got)
+	}
+
+	// An unknown group is rejected.
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/cancel", "group=nope"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cancel of unknown group: status %d, want 409", rec.Code)
+	}
+
+	// Cancelling the real group clears it.
+	rec = httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/cancel", "group=copy-down-prod-dev-1"))
+	if rec.Code != 200 {
+		t.Fatalf("cancel: status %d: %s", rec.Code, rec.Body)
+	}
+	if stalls, _ := s.stallRows(); len(stalls) != 0 {
+		t.Errorf("stall still present after cancel: %+v", stalls)
+	}
+}
+
+func formPost(path, body string) *http.Request {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
 }
 
 func waitFor(t *testing.T, cond func() bool) {

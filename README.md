@@ -24,6 +24,7 @@ required it.
 | `slipway deploy -env NAME -image REF` | patch and wait for the rollout |
 | `slipway copy-down -from prod -to stage` | files, database, sanitize — in order |
 | `slipway resume` | re-attach to work left in flight |
+| `slipway cancel -group NAME` | release a stalled sequence, cancelling the steps wedged behind a failure |
 | `slipway serve` | web UI over the same operations, plus a background reconcile loop |
 
 Not built yet: the update-hook sequence's own tests against a live cluster,
@@ -41,6 +42,12 @@ adds a single-flight guard (one operation at a time — copy-down scales a
 Deployment to zero and a deploy landing mid-copy is the exact race to avoid) and
 fans the operation's progress out to every open tab over Server-Sent Events. The
 page is one embedded HTML file with no build step and no dependencies.
+
+A sequence that failed midway shows up under "Stalled sequences" with the step
+that blocked it; "Cancel sequence" (or `slipway cancel -group NAME`) marks the
+wedged steps cancelled so `resume` and the reconcile loop stop reporting the
+group as failed. The failed step itself is left as it is — nothing is retried or
+cleaned up without someone deciding to.
 
 ## Layout
 

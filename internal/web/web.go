@@ -126,6 +126,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/deploy", s.handleDeploy)
 	mux.HandleFunc("POST /api/copy-down", s.handleCopyDown)
 	mux.HandleFunc("POST /api/resume", s.handleResume)
+	mux.HandleFunc("POST /api/cancel", s.handleCancel)
 }
 
 // --- operation lifecycle -------------------------------------------------------
@@ -244,6 +245,13 @@ func (s *server) pushJobs() {
 		return
 	}
 	s.pushSnapshot("jobs", mustJSON(rows))
+
+	stalls, err := s.stallRows()
+	if err != nil {
+		log.Printf("slipway: read stalls: %v", err)
+		return
+	}
+	s.pushSnapshot("stalled", mustJSON(stalls))
 }
 
 func (s *server) broadcastState() {
@@ -318,6 +326,45 @@ func (s *server) jobRows() ([]jobRow, error) {
 			State:   string(j.State),
 			Reason:  j.Reason,
 			Updated: j.UpdatedAt,
+		})
+	}
+	return rows, nil
+}
+
+type stallRow struct {
+	Group   string `json:"group"`
+	Env     string `json:"env"`
+	Seq     int    `json:"seq"`
+	Kind    string `json:"kind"`
+	State   string `json:"state"`
+	Reason  string `json:"reason"`
+	Waiting int    `json:"waiting"`
+}
+
+func (s *server) stallRows() ([]stallRow, error) {
+	stalls, err := s.runner.DB.Stalls()
+	if err != nil {
+		return nil, err
+	}
+	envs, err := s.runner.DB.Environments()
+	if err != nil {
+		return nil, err
+	}
+	name := map[int64]string{}
+	for _, e := range envs {
+		name[e.ID] = e.Name
+	}
+
+	rows := make([]stallRow, 0, len(stalls))
+	for _, st := range stalls {
+		rows = append(rows, stallRow{
+			Group:   st.GroupID,
+			Env:     name[st.EnvID],
+			Seq:     st.BlockedBySeq,
+			Kind:    string(st.BlockedByKind),
+			State:   string(st.BlockedByState),
+			Reason:  st.BlockedByReason,
+			Waiting: st.Waiting,
 		})
 	}
 	return rows, nil

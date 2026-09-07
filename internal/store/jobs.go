@@ -182,3 +182,93 @@ func (d *DB) Advance(id int64, from, to jobs.State, reason string) error {
 	}
 	return nil
 }
+
+// Stall is a sequence that can no longer make progress: an earlier step failed
+// terminally and steps behind it are still unfinished, waiting on a predecessor
+// that will never succeed.
+//
+// Runnable already returns nothing for such a group — this is the same
+// condition named and surfaced, so the UI can say "stalled" instead of leaving
+// the trailing step looking like it is merely pending.
+type Stall struct {
+	GroupID string
+	EnvID   int64
+
+	// BlockedBy* describe the step that failed and is holding the rest.
+	BlockedBySeq    int
+	BlockedByKind   jobs.Kind
+	BlockedByState  jobs.State
+	BlockedByReason string
+
+	// Waiting is how many later steps are stuck behind it.
+	Waiting int
+}
+
+// Stalls lists every sequence wedged behind a failed step.
+//
+// A group is stalled when its earliest not-yet-succeeded step is in a terminal
+// failure state (failed, cancelled, orphaned) and at least one later step is
+// still unfinished. A group whose failure has no unfinished steps behind it is
+// simply finished-with-a-failure, not stalled, and does not appear here.
+func (d *DB) Stalls() ([]Stall, error) {
+	rows, err := d.Query(`
+		WITH blocker AS (
+			SELECT group_id, MIN(seq) AS seq
+			FROM jobs
+			WHERE group_id != '' AND state != 'succeeded'
+			GROUP BY group_id
+		)
+		SELECT j.group_id, j.env_id, j.seq, j.kind, j.state, j.reason,
+		       (SELECT COUNT(*) FROM jobs w
+		        WHERE w.group_id = j.group_id AND w.seq > j.seq
+		          AND w.state NOT IN ('succeeded','failed','cancelled','orphaned')) AS waiting
+		FROM jobs j
+		JOIN blocker b ON b.group_id = j.group_id AND b.seq = j.seq
+		WHERE j.state IN ('failed','cancelled','orphaned')
+		ORDER BY j.group_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list stalls: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Stall
+	for rows.Next() {
+		var s Stall
+		var kind, state string
+		if err := rows.Scan(&s.GroupID, &s.EnvID, &s.BlockedBySeq, &kind, &state, &s.BlockedByReason, &s.Waiting); err != nil {
+			return nil, fmt.Errorf("scan stall: %w", err)
+		}
+		s.BlockedByKind, s.BlockedByState = jobs.Kind(kind), jobs.State(state)
+		if s.Waiting > 0 {
+			out = append(out, s)
+		}
+	}
+	return out, rows.Err()
+}
+
+// CancelGroup marks every unfinished step of a group as cancelled, releasing a
+// stalled sequence so the reconciler and `resume` stop reporting it as failed.
+//
+// It is the deliberate human act the "sequences stall where they fail" design
+// asks for: nothing is retried or cleaned up automatically, someone looks at
+// the failure and decides to let the rest go. Returns the number of steps
+// cancelled.
+func (d *DB) CancelGroup(groupID string) (int, error) {
+	if groupID == "" {
+		return 0, fmt.Errorf("cancel group: no group id")
+	}
+	res, err := d.Exec(`
+		UPDATE jobs SET state = 'cancelled',
+		    reason = 'cancelled with the rest of a stalled sequence',
+		    updated_at = datetime('now')
+		WHERE group_id = ?
+		  AND state NOT IN ('succeeded','failed','cancelled','orphaned')`, groupID)
+	if err != nil {
+		return 0, fmt.Errorf("cancel group %s: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cancel group %s: %w", groupID, err)
+	}
+	return int(n), nil
+}

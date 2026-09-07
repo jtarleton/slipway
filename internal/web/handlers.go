@@ -44,6 +44,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// blank until the next tick.
 	writeEvent(w, "grid", jsonOrEmpty(s.gridRows(r.Context())))
 	writeEvent(w, "jobs", jsonOrEmpty(s.jobRows()))
+	writeEvent(w, "stalled", jsonOrEmpty(s.stallRows()))
 	writeEvent(w, "state", mustJSON(s.stateView()))
 	flusher.Flush()
 
@@ -132,6 +133,25 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 	s.launch(w, "resume", copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Resume(ctx)
 	})
+}
+
+// handleCancel releases a stalled sequence. Unlike the others this is an
+// instant control-plane write, not a long operation, so it runs inline and
+// answers with the outcome rather than going through the single-flight guard —
+// a stalled group has no runnable steps, so nothing is driving it to collide
+// with.
+func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("group")
+	if group == "" {
+		http.Error(w, "cancel needs group", http.StatusBadRequest)
+		return
+	}
+	if err := s.runner.Cancel(r.Context(), group); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	s.pushJobs()
+	w.Write([]byte("cancelled\n"))
 }
 
 // launch starts a foreground operation and answers the request immediately —

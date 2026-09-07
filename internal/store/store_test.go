@@ -285,6 +285,90 @@ func TestRunnableStallsAfterAFailure(t *testing.T) {
 	}
 }
 
+func TestStallsAndCancelGroup(t *testing.T) {
+	db := open(t)
+	envID := seedEnv(t, db)
+
+	kinds := []jobs.Kind{jobs.KindSyncFiles, jobs.KindRestore, jobs.KindSanitize}
+	var ids []int64
+	for i, k := range kinds {
+		id, err := db.CreateJob(Job{
+			EnvID: envID, GroupID: "copy-down-x", Seq: i, Kind: k,
+			K8sJobName: jobs.Name("stage", 9, i, k),
+		})
+		if err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	// Nothing has failed yet — not a stall.
+	if stalls, err := db.Stalls(); err != nil || len(stalls) != 0 {
+		t.Fatalf("Stalls = %+v (err %v), want none before any failure", stalls, err)
+	}
+
+	// seq 0 succeeds, seq 1 fails: seq 2 is now wedged.
+	mustAdvance(t, db, ids[0], jobs.Pending, jobs.Succeeded)
+	mustAdvance(t, db, ids[1], jobs.Pending, jobs.Failed)
+
+	stalls, err := db.Stalls()
+	if err != nil {
+		t.Fatalf("Stalls: %v", err)
+	}
+	if len(stalls) != 1 {
+		t.Fatalf("Stalls = %+v, want exactly one", stalls)
+	}
+	got := stalls[0]
+	if got.GroupID != "copy-down-x" || got.BlockedBySeq != 1 || got.BlockedByKind != jobs.KindRestore {
+		t.Errorf("stall = %+v, want blocked at seq 1 restore", got)
+	}
+	if got.BlockedByState != jobs.Failed || got.Waiting != 1 {
+		t.Errorf("stall = %+v, want state failed and 1 waiting", got)
+	}
+
+	// Cancelling the group releases the one wedged step and clears the stall.
+	n, err := db.CancelGroup("copy-down-x")
+	if err != nil {
+		t.Fatalf("CancelGroup: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("CancelGroup cancelled %d steps, want 1 (the failed step must be left alone)", n)
+	}
+	if stalls, _ := db.Stalls(); len(stalls) != 0 {
+		t.Errorf("Stalls = %+v after cancel, want none", stalls)
+	}
+	if unfinished, _ := db.Unfinished(); len(unfinished) != 0 {
+		t.Errorf("Unfinished = %+v after cancel, want none", unfinished)
+	}
+}
+
+// A group that failed with nothing queued behind it is finished-with-a-failure,
+// not stalled — there is nothing to release.
+func TestStallsIgnoresAFailureWithNothingWaiting(t *testing.T) {
+	db := open(t)
+	envID := seedEnv(t, db)
+
+	id, err := db.CreateJob(Job{
+		EnvID: envID, GroupID: "solo", Seq: 0, Kind: jobs.KindSnapshot,
+		K8sJobName: jobs.Name("prod", 8, 0, jobs.KindSnapshot),
+	})
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	mustAdvance(t, db, id, jobs.Pending, jobs.Failed)
+
+	if stalls, err := db.Stalls(); err != nil || len(stalls) != 0 {
+		t.Fatalf("Stalls = %+v (err %v), want none", stalls, err)
+	}
+}
+
+func mustAdvance(t *testing.T, db *DB, id int64, from, to jobs.State) {
+	t.Helper()
+	if err := db.Advance(id, from, to, string(to)); err != nil {
+		t.Fatalf("Advance %d %s->%s: %v", id, from, to, err)
+	}
+}
+
 // Independent sequences must not block one another.
 func TestRunnableRunsGroupsInParallel(t *testing.T) {
 	db := open(t)
