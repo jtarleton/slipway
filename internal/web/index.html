@@ -244,6 +244,11 @@
     <div id="stalled"></div>
   </section>
 
+  <section id="releases-sec" hidden>
+    <h2>Releases</h2>
+    <div class="tablewrap"><div id="releases"></div></div>
+  </section>
+
   <section id="snapshots-sec" hidden>
     <h2>Snapshots</h2>
     <div class="tablewrap"><div id="snapshots"></div></div>
@@ -323,11 +328,14 @@
       if (r.rollback_to) actions.push(
         `<button class="act" data-rollback="${esc(r.env)}" data-rollback-to="${esc(r.rollback_to)}">roll back</button>`);
       if (!r.pinned) actions.push(`<button class="act" data-pin="${esc(r.env)}">pin</button>`);
+      const primary = r.release
+        ? `<span class="v">${esc(r.release)}</span><span class="m">${esc(r.git_sha)} · ${esc(r.code)}</span>`
+        : `<span class="v">${esc(r.code)}</span>
+           <span class="m ${r.pinned ? '' : 'loose'}">${r.pinned ? 'pinned' : 'tag — not traceable'}</span>`;
       return `<div ${attrs}>
         <div class="chip" data-artifact="code" data-env="${esc(r.env)}" data-rank="${r.rank}"
              data-promote="${esc(r.promote)}" draggable="${canDrag}">
-          <span class="v">${esc(r.code)}</span>
-          <span class="m ${r.pinned ? '' : 'loose'}">${r.pinned ? 'pinned' : 'tag — not traceable'}</span>
+          ${primary}
         </div>
         <div class="acts">${actions.join("")}</div></div>`;
     }
@@ -563,6 +571,37 @@
     });
   });
 
+  function renderReleases(rows) {
+    rows = rows || [];
+    $("releases-sec").hidden = rows.length === 0;
+    if (!rows.length) return;
+    $("releases").innerHTML = `<table><thead><tr>
+        <th>Built</th><th>Ref</th><th>SHA</th><th>Image</th><th></th>
+      </tr></thead><tbody>` + rows.map(r => `
+        <tr>
+          <td class="mono">${esc(r.built)}</td>
+          <td>${esc(r.ref)}</td>
+          <td class="mono">${esc(r.git_sha)}</td>
+          <td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis">${esc(r.image)}</td>
+          <td><button class="act" data-deploy-release="${esc(r.ref)}">deploy…</button></td>
+        </tr>`).join("") + `</tbody></table>`;
+  }
+  $("releases").addEventListener("click", (e) => {
+    const ref = e.target.getAttribute("data-deploy-release");
+    if (!ref || running) return;
+    const opts = envs.map(x => `<option value="${esc(x.name)}">${esc(x.name)}</option>`).join("");
+    confirmOp({
+      title: `Deploy release ${ref}`,
+      kv: [["Release", ref]],
+      extra: `<label class="chk">Environment
+          <select id="rel-env" style="margin-left:8px">${opts}</select></label>
+        <label class="chk"><input type="checkbox" id="rel-nosnap"> skip the pre-deploy snapshot</label>`,
+      run: () => post("/api/deploy", {
+        env: $("rel-env").value, release: ref, no_snapshot: $("rel-nosnap").checked,
+      }),
+    });
+  });
+
   function renderHistory(rows) {
     rows = rows || [];
     $("history-sec").hidden = rows.length === 0;
@@ -633,6 +672,7 @@
     es.addEventListener("jobs", (e) => renderJobs(JSON.parse(e.data)));
     es.addEventListener("stalled", (e) => renderStalls(JSON.parse(e.data)));
     es.addEventListener("snapshots", (e) => renderSnapshots(JSON.parse(e.data)));
+    es.addEventListener("releases", (e) => renderReleases(JSON.parse(e.data)));
     es.addEventListener("history", (e) => renderHistory(JSON.parse(e.data)));
     es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
     es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));

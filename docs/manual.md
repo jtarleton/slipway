@@ -90,21 +90,55 @@ This changes **no running code** — it is the same image — but it makes
 if the Deployment is already digest-pinned, and an error if there is no running
 pod to resolve a digest from.
 
-### `slipway deploy -env NAME -image REF`
+### `slipway release -image REF -sha SHA -ref REF`
 
-Snapshot the database, deploy an image, wait for the rollout, then run the
-post-deploy update sequence.
+Record a built image against the commit it came from. This is what CI calls
+after a build; it needs no cluster access, so it runs from anywhere (including a
+GitHub Actions runner) as long as it can reach the control-plane database — or,
+more usually, it is `POST`ed to a running `slipway serve` (see the HTTP API).
+
+```
+slipway release \
+  -image ghcr.io/jtarleton/d11app@sha256:4d367eec328a… \
+  -sha  $GITHUB_SHA \
+  -ref  $GITHUB_REF          # refs/tags/v2.1.0 or refs/heads/main
+```
+
+| Flag         | Meaning                                                          |
+|--------------|----------------------------------------------------------------|
+| `-image REF` | the built image, digest-pinned (`repo@sha256:…`); required      |
+| `-ref REF`   | the git ref built (`refs/tags/v2.1.0`, `refs/heads/main`); required |
+| `-sha SHA`   | the git commit sha                                              |
+| `-built-at`  | build time, RFC3339 (default: now)                              |
+
+Idempotent on the image digest — a retried notification, or two refs pointing at
+one build, collapse to one row.
+
+### `slipway releases`
+
+List recorded releases, newest build first. `slipway deploy -release` takes the
+`REF` column.
+
+### `slipway deploy -env NAME (-image REF | -release REF)`
+
+Snapshot the database, deploy, wait for the rollout, then run the post-deploy
+update sequence.
 
 ```
 slipway deploy -env stage -image ghcr.io/jtarleton/d11app@sha256:4d367eec328a…
+slipway deploy -env stage -release v2.1.0        # by recorded release
 ```
 
 | Flag                  | Meaning                                                        |
 |-----------------------|---------------------------------------------------------------|
-| `-image REF`          | image to deploy (required)                                     |
+| `-image REF`          | image to deploy — exactly one of `-image` or `-release`        |
+| `-release REF`        | git ref of a recorded release; resolved to its digest         |
 | `-no-snapshot`        | skip the pre-deploy database snapshot                          |
 | `-skip-update`        | patch and roll out only; do not run update hooks              |
 | `-skip-config-import` | run the update sequence but omit `drush config:import`        |
+
+Deploying by release records which release landed, so `slipway history` and the
+grid can name it.
 
 A database snapshot is taken **before** anything is patched, and the image being
 replaced is recorded — this is what gives `slipway rollback` somewhere to go
@@ -325,9 +359,10 @@ Run the web UI and a background reconcile loop.
 slipway serve -addr :8080
 ```
 
-| Flag         | Default  | Meaning                          |
-|--------------|----------|----------------------------------|
-| `-addr ADDR` | `:8080`  | address to listen on             |
+| Flag              | Default                       | Meaning                                                   |
+|-------------------|-------------------------------|----------------------------------------------------------|
+| `-addr ADDR`      | `:8080`                       | address to listen on                                     |
+| `-release-token`  | env `SLIPWAY_RELEASE_TOKEN`   | bearer token that enables `POST /api/releases` for CI; unset disables it |
 
 Runs until it receives `SIGINT` or `SIGTERM`. While it runs, a loop reconciles
 any in-flight jobs every few seconds — so a sequence started from the CLI, or
@@ -422,6 +457,9 @@ Below the matrix:
 
 - **Live log** — the running operation's output, streamed line by line. Shows
   `idle — no operation running` when nothing is active.
+- **Releases** — appears once CI has recorded a build. Each row (built, ref, sha,
+  image) has a **deploy…** button that opens a dialog to pick a target
+  environment. The matrix's Code cells also name the running release.
 - **Stalled sequences** — appears only when a copy-down is wedged behind a
   failed step. Shows which step blocked it and how many steps are waiting, with
   a **Cancel sequence** button (`slipway cancel`).
@@ -453,15 +491,16 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | Method | Path              | Body (form-encoded)                                       |
 |--------|-------------------|----------------------------------------------------------|
 | GET    | `/`               | the HTML page                                             |
-| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `snapshots`, `history`, `state`, `log` |
+| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `snapshots`, `releases`, `history`, `state`, `log` |
 | GET    | `/api/grid`       | current grid as JSON                                      |
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |
 | POST   | `/api/pin`        | `env`                                                     |
-| POST   | `/api/deploy`     | `env`, `image`, `no_snapshot`, `skip_update`, `skip_config_import` |
+| POST   | `/api/deploy`     | `env`, and one of `image` / `release`; `no_snapshot`, `skip_update`, `skip_config_import` |
 | POST   | `/api/snapshot`   | `env`                                                    |
 | POST   | `/api/restore`    | `env`, `snapshot` (id)                                   |
 | POST   | `/api/rollback`   | `env`, `with_data`                                       |
+| POST   | `/api/releases`   | `image`, `ref`, `sha`, `built_at` — **bearer token**, `201` on success |
 | POST   | `/api/copy-down`  | `from`, `to`, `skip_files`, `skip_db`, `clean`            |
 | POST   | `/api/resume`     | —                                                        |
 | POST   | `/api/cancel`     | `group`                                                   |
@@ -470,6 +509,25 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 operation starts and `409 Conflict` when another is already running; progress
 then arrives on `/events`, not in the response. `cancel` is a synchronous
 bookkeeping write — `200 OK`, or `409` if the group is not stalled.
+
+### Wiring up CI
+
+Start the server with a token — `slipway serve -release-token "$(openssl rand -hex 16)"`
+or the `SLIPWAY_RELEASE_TOKEN` env var — and have the build pipeline post to it
+after it pushes the image:
+
+```
+curl -fsS -X POST https://slipway.internal/api/releases \
+  -H "Authorization: Bearer $SLIPWAY_RELEASE_TOKEN" \
+  --data-urlencode "image=ghcr.io/jtarleton/d11app@${DIGEST}" \
+  --data-urlencode "ref=${GITHUB_REF}" \
+  --data-urlencode "sha=${GITHUB_SHA}"
+```
+
+That is the whole handoff. From then on `slipway deploy -env stage -release <tag>`
+and the "deploy…" buttons in the Releases panel work by name, and the grid shows
+which release each environment is running. Without a token the endpoint is off
+and `slipway release` on the CLI is the only way in.
 
 ---
 

@@ -72,6 +72,7 @@ type Deploy struct {
 	FromImage  string
 	ToImage    string
 	SnapshotID *int64
+	ReleaseID  *int64
 	RolledBack bool
 	Actor      string
 	At         string
@@ -79,15 +80,16 @@ type Deploy struct {
 
 // LogDeploy records a deployment. from is what was running before, to is what
 // was just put in place, snapshotID is the pre-deploy database snapshot if one
-// was taken (nil otherwise).
-func (d *DB) LogDeploy(envID int64, from, to string, snapshotID *int64, actor string) (int64, error) {
+// was taken, releaseID is the release deployed if it was named rather than a
+// bare image (both nil otherwise).
+func (d *DB) LogDeploy(envID int64, from, to string, snapshotID, releaseID *int64, actor string) (int64, error) {
 	if to == "" {
 		return 0, fmt.Errorf("log deploy: no target image")
 	}
 	res, err := d.Exec(`
-		INSERT INTO deploy_log (env_id, from_image, to_image, snapshot_id, actor)
-		VALUES (?, ?, ?, ?, ?)`,
-		envID, from, to, snapshotID, actor)
+		INSERT INTO deploy_log (env_id, from_image, to_image, snapshot_id, release_id, actor)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		envID, from, to, snapshotID, releaseID, actor)
 	if err != nil {
 		return 0, fmt.Errorf("log deploy to env %d: %w", envID, err)
 	}
@@ -99,20 +101,23 @@ func (d *DB) LogDeploy(envID int64, from, to string, snapshotID *int64, actor st
 // there is nothing to roll back to.
 func (d *DB) LastDeploy(envID int64) (Deploy, error) {
 	var dep Deploy
-	var snap sql.NullInt64
+	var snap, rel sql.NullInt64
 	var rolled int
 	err := d.QueryRow(`
-		SELECT id, env_id, from_image, to_image, snapshot_id, rolled_back, actor, at
+		SELECT id, env_id, from_image, to_image, snapshot_id, release_id, rolled_back, actor, at
 		FROM deploy_log
 		WHERE env_id = ? AND rolled_back = 0
 		ORDER BY at DESC, id DESC
 		LIMIT 1`, envID).
-		Scan(&dep.ID, &dep.EnvID, &dep.FromImage, &dep.ToImage, &snap, &rolled, &dep.Actor, &dep.At)
+		Scan(&dep.ID, &dep.EnvID, &dep.FromImage, &dep.ToImage, &snap, &rel, &rolled, &dep.Actor, &dep.At)
 	if err != nil {
 		return Deploy{}, err
 	}
 	if snap.Valid {
 		dep.SnapshotID = &snap.Int64
+	}
+	if rel.Valid {
+		dep.ReleaseID = &rel.Int64
 	}
 	dep.RolledBack = rolled != 0
 	return dep, nil

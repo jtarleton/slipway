@@ -26,8 +26,10 @@ import (
 const usage = `slipway — deployment control plane for Drupal on k3s
 
   slipway grid                     show what is running in every environment
+  slipway release -image REF -sha SHA -ref REF   record a built image (what CI calls after a build)
+  slipway releases                 list recorded releases
   slipway pin   -env NAME          rewrite a tag-pinned Deployment to the digest it is already running
-  slipway deploy -env NAME -image REF   snapshot the database, deploy, wait for rollout, run update hooks
+  slipway deploy -env NAME (-image REF | -release REF)   snapshot the database, deploy, wait, run update hooks
         -no-snapshot  skip the pre-deploy snapshot   -skip-update  skip update hooks
   slipway snapshot  -env NAME       dump the database to object storage and record it
   slipway snapshots -env NAME       list the recorded snapshots for an environment
@@ -79,9 +81,15 @@ func run(args []string) error {
 		skipDB     = fs.Bool("skip-db", false, "copy files only, leaving the database alone")
 		clean      = fs.Bool("clean", false, "empty the target file tree before pulling (needed on first seed)")
 		image      = fs.String("image", "", "image reference to deploy")
+		release    = fs.String("release", "", "git ref of a recorded release to deploy")
+		gitSHA     = fs.String("sha", "", "git commit sha for 'release'")
+		gitRef     = fs.String("ref", "", "git ref for 'release' (refs/tags/v2.1.0, refs/heads/main)")
+		builtAt    = fs.String("built-at", "", "build time for 'release' (RFC3339; default now)")
 		group      = fs.String("group", "", "job group for 'cancel'")
 		snapshotID = fs.Int64("snapshot", 0, "snapshot id for 'restore'")
 		addr       = fs.String("addr", ":8080", "address for 'serve' to listen on")
+		relToken   = fs.String("release-token", os.Getenv("SLIPWAY_RELEASE_TOKEN"),
+			"bearer token that enables POST /api/releases for CI (env SLIPWAY_RELEASE_TOKEN)")
 	)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -97,9 +105,14 @@ func run(args []string) error {
 		return err
 	}
 
-	client, err := k8s.New(*kubeconfig)
-	if err != nil {
-		return err
+	// The store-only commands do not touch the cluster, so they work without a
+	// kubeconfig — CI can call `slipway release` from anywhere.
+	var client *k8s.Client
+	if needsCluster(command) {
+		client, err = k8s.New(*kubeconfig)
+		if err != nil {
+			return err
+		}
 	}
 
 	runner := &ops.Runner{
@@ -114,7 +127,7 @@ func run(args []string) error {
 
 	if command == "serve" {
 		runner.Actor = "web"
-		return web.Serve(context.Background(), *addr, runner)
+		return web.Serve(context.Background(), *addr, *relToken, runner)
 	}
 
 	// Reading the grid should fail fast; moving a database should not fail at
@@ -135,10 +148,14 @@ func run(args []string) error {
 		return printGrid(ctx, runner)
 	case "history":
 		return printHistory(db)
+	case "release":
+		return runner.RecordRelease(*image, *gitSHA, *gitRef, *builtAt)
+	case "releases":
+		return printReleases(runner)
 	case "pin":
 		return runner.Pin(ctx, *env)
 	case "deploy":
-		return runner.Deploy(ctx, *env, *image, *skipUpdate, *skipConfig, *noSnapshot)
+		return runner.Deploy(ctx, *env, *image, *release, *skipUpdate, *skipConfig, *noSnapshot)
 	case "snapshot":
 		return runner.Snapshot(ctx, *env)
 	case "snapshots":
@@ -160,6 +177,41 @@ func run(args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// needsCluster reports whether a command talks to Kubernetes. The rest are
+// control-plane reads and writes that run without a kubeconfig.
+func needsCluster(command string) bool {
+	switch command {
+	case "release", "releases", "history", "snapshots":
+		return false
+	default:
+		return true
+	}
+}
+
+func printReleases(runner *ops.Runner) error {
+	rels, err := runner.Releases()
+	if err != nil {
+		return err
+	}
+	if len(rels) == 0 {
+		fmt.Println("no releases recorded yet")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "BUILT\tREF\tSHA\tIMAGE")
+	for _, r := range rels {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.BuiltAt, r.GitRef, shortSHA(r.GitSHA), r.ImageRef)
+	}
+	return w.Flush()
+}
+
+func shortSHA(s string) string {
+	if len(s) > 7 {
+		return s[:7]
+	}
+	return s
 }
 
 func printHistory(db *store.DB) error {

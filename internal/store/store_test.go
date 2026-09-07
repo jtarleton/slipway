@@ -397,7 +397,7 @@ func TestDeployLogAndRollbackTarget(t *testing.T) {
 	}
 
 	snapID, _ := db.RecordSnapshot(envID, "s3://b/prod/db/pre.sql.gz", false)
-	first, err := db.LogDeploy(envID, "repo@sha256:old", "repo@sha256:new", &snapID, "tester")
+	first, err := db.LogDeploy(envID, "repo@sha256:old", "repo@sha256:new", &snapID, nil, "tester")
 	if err != nil {
 		t.Fatalf("LogDeploy: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestDeployLogAndRollbackTarget(t *testing.T) {
 	}
 
 	// A second deploy shadows the first.
-	if _, err := db.LogDeploy(envID, "repo@sha256:new", "repo@sha256:newer", nil, "tester"); err != nil {
+	if _, err := db.LogDeploy(envID, "repo@sha256:new", "repo@sha256:newer", nil, nil, "tester"); err != nil {
 		t.Fatalf("LogDeploy: %v", err)
 	}
 	if dep, _ := db.LastDeploy(envID); dep.FromImage != "repo@sha256:new" {

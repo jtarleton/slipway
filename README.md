@@ -17,14 +17,16 @@ and how to drive the web UI.
 
 ## Status
 
-Phase 2, plus the copy-down lane brought forward because standing up `stage`
-required it.
+Phase 3: releases close the loop with CI — a build is recorded once, then
+deployed and promoted by name.
 
 | Working | |
 |---|---|
-| `slipway grid` | what is running in every environment, resolved to a digest |
+| `slipway grid` | what is running in every environment, named by release where CI recorded one |
+| `slipway release -image REF -sha SHA -ref REF` | record a built image (what CI calls after a build) |
+| `slipway releases` | list recorded releases |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
-| `slipway deploy -env NAME -image REF` | snapshot the database, patch, wait for the rollout, run update hooks |
+| `slipway deploy -env NAME (-image REF \| -release REF)` | snapshot the database, patch, wait for the rollout, run update hooks |
 | `slipway snapshot -env NAME` | dump the database to object storage and record it |
 | `slipway snapshots -env NAME` / `restore -snapshot ID` | list snapshots, load one back |
 | `slipway rollback -env NAME` | re-deploy the previous image; `-with-data` also restores its pre-deploy snapshot |
@@ -34,8 +36,9 @@ required it.
 | `slipway history` | the operation log — what ran, against what, how it turned out |
 | `slipway serve` | web UI over the same operations, plus a background reconcile loop |
 
-Not built yet: the update-hook sequence's own tests against a live cluster; the
-releases/deployments tables and a GitHub Actions integration to populate them.
+Not built yet: the update-hook sequence's own tests against a live cluster; a
+turnkey GitHub Actions workflow that calls `POST /api/releases` after a build
+(the endpoint and token auth exist; the workflow YAML does not).
 
 ## The web UI
 
@@ -56,10 +59,11 @@ copy pulled from `prod`, `dev` has never been seeded, and `prod` is the source o
 record. Anything the drag gestures don't cover — deploying an arbitrary image,
 `-clean`, `-skip-config-import` — is under "Manual operations".
 
-Below the matrix a live log streams the running operation's output; an operation
-history records what ran, by whom, and how it turned out; and a job-steps table
-shows every Kubernetes Job's state — all pushed over the same event stream that
-drives the grid.
+The Code cells name the running release where CI recorded one. Below the matrix:
+a live log of the running operation, a list of recorded releases (each with a
+"deploy to…" action), the database snapshots, an operation history of what ran
+and how it turned out, and a job-steps table of every Kubernetes Job's state —
+all pushed over the same event stream that drives the grid.
 
 Every operation is the same `internal/ops` call the CLI makes; the server only
 adds a single-flight guard (one operation at a time — copy-down scales a
@@ -76,7 +80,7 @@ cleaned up without someone deciding to.
 ## Layout
 
     internal/jobs      state machine and deterministic Job naming
-    internal/store     SQLite control-plane state
+    internal/store     SQLite control-plane state, with tiny forward migrations
     internal/k8s       cluster read and write
     internal/engine    the reconcile loop
     internal/drupal    what each operation actually runs
@@ -113,6 +117,15 @@ tools, and the dump never lands on a PersistentVolume.
 row on completion — action, target, actor (`cli` or `web`), and outcome —
 regardless of which front end invoked it. `slipway history` and the web UI's
 operation-history table read the same log.
+
+**A release is recorded once, deployed by name.** CI `POST`s the built image and
+its git provenance to `/api/releases` (bearer-token gated, the one endpoint
+reachable from outside). `slipway deploy -release v2.1.0` resolves that to the
+exact digest; the grid then shows `v2.1.0 · abc1234` instead of a bare hash, for
+any environment whose running digest matches a recorded release. Schema changes
+land through a tiny `migrate()` in `store.Open` — idempotent `ALTER TABLE`s run
+after `schema.sql`, since `CREATE TABLE IF NOT EXISTS` will not evolve an
+existing table.
 
 ## Assumptions
 

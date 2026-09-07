@@ -153,7 +153,7 @@ func TestGridExposesSnapshotsAndRollbackTarget(t *testing.T) {
 	prod := envs[1] // testServer seeds dev then prod
 
 	snapID, _ := s.runner.DB.RecordSnapshot(prod.ID, "s3://b/prod/db/1.sql.gz", false)
-	if _, err := s.runner.DB.LogDeploy(prod.ID, "reg/d@sha256:old", "reg/d@sha256:new", &snapID, "t"); err != nil {
+	if _, err := s.runner.DB.LogDeploy(prod.ID, "reg/d@sha256:old", "reg/d@sha256:new", &snapID, nil, "t"); err != nil {
 		t.Fatalf("LogDeploy: %v", err)
 	}
 
@@ -221,6 +221,65 @@ func TestRestoreNeedsEnvAndSnapshot(t *testing.T) {
 	mux(s).ServeHTTP(rec, formPost("/api/restore", "env=dev"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("restore with no snapshot id: status %d, want 400", rec.Code)
+	}
+}
+
+func TestGridNamesTheRunningRelease(t *testing.T) {
+	s := testServer(t)
+	digest := "sha256:" + strings.Repeat("a", 64) // matches prod's image in testServer
+	if _, err := s.runner.DB.CreateRelease(store.Release{
+		GitSHA: "cafe1234feed", GitRef: "refs/tags/v3.0.0",
+		ImageRef: "reg/d@" + digest, ImageDigest: digest, BuiltAt: "2026-09-07T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("CreateRelease: %v", err)
+	}
+
+	rows, err := s.gridRows(context.Background())
+	if err != nil {
+		t.Fatalf("gridRows: %v", err)
+	}
+	if rows[1].Release != "v3.0.0" || rows[1].GitSHA != "cafe123" {
+		t.Errorf("prod row = %+v, want it named for the release", rows[1])
+	}
+	if rows[0].Release != "" {
+		t.Errorf("dev row = %+v, want no release (its digest is unknown)", rows[0])
+	}
+}
+
+func TestRecordReleaseEndpointIsTokenGated(t *testing.T) {
+	s := testServer(t)
+	digest := "sha256:" + strings.Repeat("f", 64)
+	body := "image=reg/d@" + digest + "&ref=refs/tags/v1&sha=abcdef0"
+
+	// No token configured → the endpoint is not there.
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/releases", body))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("no-token status %d, want 404", rec.Code)
+	}
+
+	s.releaseToken = "s3cret"
+
+	// Wrong token → 401.
+	rec = httptest.NewRecorder()
+	req := formPost("/api/releases", body)
+	req.Header.Set("Authorization", "Bearer wrong")
+	mux(s).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad-token status %d, want 401", rec.Code)
+	}
+
+	// Right token → recorded.
+	rec = httptest.NewRecorder()
+	req = formPost("/api/releases", body)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	mux(s).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("good-token status %d: %s", rec.Code, rec.Body)
+	}
+	rels, _ := s.runner.Releases()
+	if len(rels) != 1 || rels[0].ImageDigest != digest {
+		t.Errorf("release not recorded: %+v", rels)
 	}
 }
 

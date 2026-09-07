@@ -2,11 +2,13 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -50,6 +52,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeEvent(w, "stalled", jsonOrEmpty(s.stallRows()))
 	writeEvent(w, "snapshots", jsonOrEmpty(s.snapshotRows()))
 	writeEvent(w, "history", jsonOrEmpty(s.historyRows()))
+	writeEvent(w, "releases", jsonOrEmpty(s.releaseRows()))
 	writeEvent(w, "state", mustJSON(s.stateView()))
 	flusher.Flush()
 
@@ -109,15 +112,20 @@ func (s *server) handlePin(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	image := r.FormValue("image")
-	if env == "" || image == "" {
-		http.Error(w, "deploy needs env and image", http.StatusBadRequest)
+	release := r.FormValue("release")
+	if env == "" || (image == "") == (release == "") {
+		http.Error(w, "deploy needs env and exactly one of image or release", http.StatusBadRequest)
 		return
 	}
 	skipUpdate := r.FormValue("skip_update") == "true"
 	skipConfig := r.FormValue("skip_config_import") == "true"
 	noSnapshot := r.FormValue("no_snapshot") == "true"
-	s.launch(w, "deploy "+env, deployDeadline, func(ctx context.Context) error {
-		return s.runner.Deploy(ctx, env, image, skipUpdate, skipConfig, noSnapshot)
+	label := "deploy " + env
+	if release != "" {
+		label += " " + release
+	}
+	s.launch(w, label, deployDeadline, func(ctx context.Context) error {
+		return s.runner.Deploy(ctx, env, image, release, skipUpdate, skipConfig, noSnapshot)
 	})
 }
 
@@ -130,6 +138,44 @@ func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	s.launch(w, "snapshot "+env, copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Snapshot(ctx, env)
 	})
+}
+
+// handleRecordRelease is the CI hook: after a build, CI POSTs the image and its
+// git provenance here. It is gated by a bearer token and disabled entirely when
+// no token is configured — this is the one endpoint reachable from outside.
+func (s *server) handleRecordRelease(w http.ResponseWriter, r *http.Request) {
+	if s.releaseToken == "" {
+		http.Error(w, "release recording is not enabled (start serve with -release-token)", http.StatusNotFound)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(bearer(r)), []byte(s.releaseToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	image := r.FormValue("image")
+	sha := r.FormValue("sha")
+	ref := r.FormValue("ref")
+	builtAt := r.FormValue("built_at")
+	if image == "" || ref == "" {
+		http.Error(w, "release needs image and ref", http.StatusBadRequest)
+		return
+	}
+	if err := s.runner.RecordRelease(image, sha, ref, builtAt); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.pushJobs()
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("recorded\n"))
+}
+
+func bearer(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	if after, ok := strings.CutPrefix(h, "Bearer "); ok {
+		return after
+	}
+	return ""
 }
 
 func (s *server) handleRestore(w http.ResponseWriter, r *http.Request) {

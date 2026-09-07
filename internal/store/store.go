@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -43,7 +44,34 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &DB{db}, nil
+}
+
+// migrations are ALTER statements run after the schema on every Open. schema.sql
+// creates tables that do not yet exist; this evolves ones that already do,
+// since `CREATE TABLE IF NOT EXISTS` will not add a column to an existing table.
+// Each is written to be safe to run against a database that has already had it.
+var migrations = []string{
+	`ALTER TABLE deploy_log ADD COLUMN release_id INTEGER REFERENCES releases(id)`,
+	`ALTER TABLE releases ADD COLUMN image_ref TEXT NOT NULL DEFAULT ''`,
+}
+
+func migrate(db *sql.DB) error {
+	for _, stmt := range migrations {
+		if _, err := db.Exec(stmt); err != nil {
+			// SQLite has no "IF NOT EXISTS" for ADD COLUMN; a re-run reports the
+			// column already exists, which is success.
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return fmt.Errorf("migrate: %q: %w", stmt, err)
+		}
+	}
+	return nil
 }
 
 // Environment is one deployment target: a namespace, a hostname, and a position

@@ -38,11 +38,14 @@ const reconcileInterval = 3 * time.Second
 const gridInterval = 15 * time.Second
 
 // Serve runs the web UI and the reconcile loop until the process is signalled.
-func Serve(ctx context.Context, addr string, runner *ops.Runner) error {
+//
+// releaseToken, if non-empty, enables POST /api/releases for CI to record
+// builds; requests must carry it as a bearer token. Empty disables the endpoint.
+func Serve(ctx context.Context, addr, releaseToken string, runner *ops.Runner) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	s := &server{runner: runner, hub: newHub()}
+	s := &server{runner: runner, hub: newHub(), releaseToken: releaseToken}
 	// Route the Runner's progress to every browser. Single-flight (see start)
 	// means only one operation writes here at a time.
 	runner.Report = s.emit
@@ -92,8 +95,9 @@ func announcedAddr(addr string) string {
 }
 
 type server struct {
-	runner *ops.Runner
-	hub    *hub
+	runner       *ops.Runner
+	hub          *hub
+	releaseToken string // bearer token for POST /api/releases; "" disables it
 
 	mu      sync.Mutex
 	current string   // running operation's name, "" when idle
@@ -134,6 +138,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/copy-down", s.handleCopyDown)
 	mux.HandleFunc("POST /api/resume", s.handleResume)
 	mux.HandleFunc("POST /api/cancel", s.handleCancel)
+	mux.HandleFunc("POST /api/releases", s.handleRecordRelease)
 }
 
 // --- operation lifecycle -------------------------------------------------------
@@ -273,6 +278,13 @@ func (s *server) pushJobs() {
 		return
 	}
 	s.pushSnapshot("history", mustJSON(hist))
+
+	rels, err := s.releaseRows()
+	if err != nil {
+		log.Printf("slipway: read releases: %v", err)
+		return
+	}
+	s.pushSnapshot("releases", mustJSON(rels))
 }
 
 func (s *server) broadcastState() {
@@ -293,6 +305,8 @@ type gridRow struct {
 	Code     string `json:"code"`    // short digest for display
 	Pinned   bool   `json:"pinned"`  // spec names a digest, not a tag
 	Promote  string `json:"promote"` // the exact ref a promotion out of this env would deploy ("" if not traceable)
+	Release  string `json:"release"` // git ref of the running image, if it came through CI
+	GitSHA   string `json:"git_sha"` // short sha of that release
 	Replicas string `json:"replicas"`
 	State    string `json:"state"`
 
@@ -336,9 +350,37 @@ func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
 		if dep, err := s.runner.DB.LastDeploy(c.Env.ID); err == nil && dep.FromImage != "" {
 			row.RollbackTo = dep.FromImage
 		}
+		if digest := runningDigest(c.Workload); digest != "" {
+			if rel, err := s.runner.DB.ReleaseByDigest(digest); err == nil {
+				row.Release = shortRef(rel.GitRef)
+				row.GitSHA = shortSHA(rel.GitSHA)
+			}
+		}
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// runningDigest is the digest actually live: the pinned one, or the one the
+// pods resolved a tag to.
+func runningDigest(w k8s.Workload) string {
+	if w.Digest != "" {
+		return w.Digest
+	}
+	return w.RunningDigest
+}
+
+func shortRef(ref string) string {
+	ref = strings.TrimPrefix(ref, "refs/tags/")
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+	return ref
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
 
 // promoteRef is the image a promotion out of this environment would deploy: the
@@ -538,6 +580,27 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+type releaseRow struct {
+	Built  string `json:"built"`
+	Ref    string `json:"ref"`
+	GitSHA string `json:"git_sha"`
+	Image  string `json:"image"`
+}
+
+func (s *server) releaseRows() ([]releaseRow, error) {
+	rels, err := s.runner.Releases()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]releaseRow, 0, len(rels))
+	for _, r := range rels {
+		rows = append(rows, releaseRow{
+			Built: r.BuiltAt, Ref: shortRef(r.GitRef), GitSHA: shortSHA(r.GitSHA), Image: r.ImageRef,
+		})
+	}
+	return rows, nil
 }
 
 type stateView struct {

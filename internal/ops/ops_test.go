@@ -88,6 +88,39 @@ func TestRollbackNeedsARecordedDeploy(t *testing.T) {
 	}
 }
 
+func TestRecordReleaseRequiresADigestPinnedImage(t *testing.T) {
+	r := testRunner(t)
+	if err := r.RecordRelease("ghcr.io/x/d:latest", "sha", "refs/tags/v1", ""); err == nil {
+		t.Fatal("RecordRelease accepted a tag-only image")
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if err := r.RecordRelease("ghcr.io/x/d@"+digest, "abcdef0", "refs/tags/v1", ""); err != nil {
+		t.Fatalf("RecordRelease: %v", err)
+	}
+	rels, _ := r.Releases()
+	if len(rels) != 1 || rels[0].ImageDigest != digest {
+		t.Fatalf("Releases = %+v", rels)
+	}
+}
+
+func TestDeployRejectsBothOrNeitherImageAndRelease(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	if err := r.Deploy(context.Background(), "dev", "", "", false, false, false); err == nil {
+		t.Error("Deploy accepted neither image nor release")
+	}
+	if err := r.Deploy(context.Background(), "dev", "x@sha256:y", "v1", false, false, false); err == nil {
+		t.Error("Deploy accepted both an image and a release")
+	}
+}
+
+func TestDeployByUnknownReleaseFails(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	err := r.Deploy(context.Background(), "dev", "", "v9.9.9", false, false, false)
+	if err == nil || !strings.Contains(err.Error(), "no release") {
+		t.Fatalf("Deploy by unknown release = %v", err)
+	}
+}
+
 // Every operation leaves an audit entry, whether it succeeded or failed.
 func TestOperationsAreAudited(t *testing.T) {
 	r := testRunner(t, deployment("jt-drupal-dev", 1))

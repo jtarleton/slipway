@@ -119,18 +119,31 @@ func (r *Runner) Pin(ctx context.Context, name string) (err error) {
 // The snapshot comes first and a failed snapshot aborts the deploy: the whole
 // point of taking it is to have something to roll back to, so deploying without
 // one defeats the exercise. Pass noSnapshot to skip it deliberately.
-func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, skipConfig, noSnapshot bool) (err error) {
-	defer r.audit("deploy", name, map[string]any{
-		"image": image, "no_snapshot": noSnapshot, "skip_update": skipUpdate,
-	}, &err)
+func (r *Runner) Deploy(ctx context.Context, name, image, release string, skipUpdate, skipConfig, noSnapshot bool) (err error) {
+	detail := map[string]any{"no_snapshot": noSnapshot, "skip_update": skipUpdate}
+	defer r.audit("deploy", name, detail, &err)
 
-	if image == "" {
-		return fmt.Errorf("deploy needs an image")
+	if (image == "") == (release == "") {
+		return fmt.Errorf("deploy needs exactly one of an image or a release")
 	}
 	env, err := r.env(name)
 	if err != nil {
 		return err
 	}
+
+	var releaseID *int64
+	if release != "" {
+		rel, err := r.DB.ReleaseByRef(release)
+		if err != nil {
+			return fmt.Errorf("no release %q recorded (see 'slipway releases'): %w", release, err)
+		}
+		image = rel.ImageRef
+		releaseID = &rel.ID
+		detail["release"] = rel.GitRef
+		detail["release_sha"] = rel.GitSHA
+		r.say("%s resolves to %s (%s)", release, short(image), rel.GitSHA)
+	}
+	detail["image"] = image
 
 	if k8s.Digest(image) == "" {
 		r.say("warning: %s is not digest-pinned; what runs here will not be traceable to a release", image)
@@ -163,7 +176,7 @@ func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, ski
 		return err
 	}
 
-	if _, err := r.DB.LogDeploy(env.ID, fromImage, image, snapshotID, "slipway"); err != nil {
+	if _, err := r.DB.LogDeploy(env.ID, fromImage, image, snapshotID, releaseID, r.actor()); err != nil {
 		r.say("warning: deploy succeeded but was not recorded for rollback: %v", err)
 	}
 
@@ -172,6 +185,42 @@ func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, ski
 		return nil
 	}
 	return r.runUpdate(ctx, env, image, skipConfig)
+}
+
+// RecordRelease registers a built image against the commit it came from. CI
+// calls this after every build; deploys then reference a release by its git ref
+// instead of pasting a digest, and the grid can name what is running.
+func (r *Runner) RecordRelease(imageRef, gitSHA, gitRef, builtAt string) (err error) {
+	defer r.audit("release", gitRef, map[string]any{"image": imageRef, "sha": gitSHA}, &err)
+
+	digest := k8s.Digest(imageRef)
+	if digest == "" {
+		return fmt.Errorf("release image %q must be digest-pinned (repo@sha256:…)", imageRef)
+	}
+	if builtAt == "" {
+		builtAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	id, err := r.DB.CreateRelease(store.Release{
+		GitSHA: gitSHA, GitRef: gitRef, ImageRef: imageRef, ImageDigest: digest, BuiltAt: builtAt,
+	})
+	if err != nil {
+		return err
+	}
+	r.say("recorded release #%d: %s from %s", id, gitRef, shortSHA(gitSHA))
+	return nil
+}
+
+// Releases lists recorded releases, newest build first.
+func (r *Runner) Releases() ([]store.Release, error) { return r.DB.Releases(50) }
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	if sha == "" {
+		return "(no sha)"
+	}
+	return sha
 }
 
 // Snapshot dumps an environment's database to object storage and records it.
