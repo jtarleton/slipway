@@ -46,6 +46,14 @@ spec:
             - -addr=:8080
             - -db=/data/slipway.db
           env:
+            # user:password for HTTP Basic auth on the whole UI. Required —
+            # slipway is reachable from outside the cluster and can deploy,
+            # roll back, and exec into containers.
+            - name: SLIPWAY_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: slipway
+                  key: auth
             - name: SLIPWAY_RELEASE_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -59,10 +67,10 @@ spec:
             - name: db
               mountPath: /data
           readinessProbe:
-            httpGet: { path: /, port: http }
+            httpGet: { path: /healthz, port: http }   # /healthz is exempt from basic auth
             initialDelaySeconds: 3
           livenessProbe:
-            httpGet: { path: /, port: http }
+            httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 10
             periodSeconds: 20
           resources:
@@ -81,12 +89,12 @@ metadata:
 spec:
   selector:
     app.kubernetes.io/name: slipway
+  # NodePort, like the Drupal sites — reachable at <node>:30090. The UI is
+  # gated by SLIPWAY_AUTH (HTTP Basic); put it behind Cloudflare (or the node's
+  # firewall) if you want TLS and to keep it off the open internet.
+  type: NodePort
   ports:
     - name: http
       port: 8080
       targetPort: http
-  # ClusterIP by default. Expose it the way the Drupal sites are exposed — a
-  # NodePort plus an entry in the external proxy — if the web UI and the CI
-  # release hook need to be reachable. `kubectl -n slipway port-forward svc/slipway 8080`
-  # is enough for the UI alone.
-  type: ClusterIP
+      nodePort: 30090

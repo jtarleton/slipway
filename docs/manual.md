@@ -448,12 +448,19 @@ slipway serve -addr :8080
 | Flag              | Default                       | Meaning                                                   |
 |-------------------|-------------------------------|----------------------------------------------------------|
 | `-addr ADDR`      | `:8080`                       | address to listen on                                     |
+| `-auth`           | env `SLIPWAY_AUTH`            | `user:password` for HTTP Basic auth on the whole UI and API; unset leaves it open (and logs a warning) |
 | `-release-token`  | env `SLIPWAY_RELEASE_TOKEN`   | bearer token that enables `POST /api/releases` for CI; unset disables it |
 
 Runs until it receives `SIGINT` or `SIGTERM`. While it runs it reconciles any
 in-flight jobs every few seconds — so a sequence started from the CLI, or left
 behind by a crash, finishes without anyone keeping a terminal open — and
 evaluates schedules (see `slipway schedule`). See the next section.
+
+The UI has no login of its own. `-auth user:password` puts HTTP Basic auth in
+front of everything except `/healthz` and the token-gated `POST /api/releases`.
+Set it whenever slipway is reachable beyond a `port-forward` — it can deploy,
+roll back, and exec into containers. Basic auth over plain HTTP is only as
+private as the transport, so terminate TLS in front of it.
 
 ---
 

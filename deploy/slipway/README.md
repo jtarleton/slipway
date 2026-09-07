@@ -34,10 +34,17 @@ kubectl -n jt-drupal get secret ghcr -o json \
   | jq '{apiVersion, kind, type, data, metadata: {name: .metadata.name}}' \
   | kubectl -n slipway create -f -
 
-# the CI release token (optional — omit to leave POST /api/releases disabled)
+# the slipway secret: HTTP Basic auth for the UI (required — see below) and,
+# optionally, the CI release token
 kubectl -n slipway create secret generic slipway \
+  --from-literal=auth="jt:$(openssl rand -hex 16)" \
   --from-literal=release-token="$(openssl rand -hex 24)"
 ```
+
+`auth` gates the entire UI and API with HTTP Basic auth. It is **not optional**
+for a NodePort deployment — slipway can deploy, roll back, and exec into
+containers, and the Service is reachable from outside the cluster. Only the
+kubelet's `/healthz` probe and the token-gated `POST /api/releases` are exempt.
 
 ## 4. Deploy
 
@@ -49,11 +56,16 @@ Pin the image to a digest in `deployment.yaml` rather than leaving `:latest`.
 
 ## 5. Reach it
 
-The Service is `ClusterIP`. For the web UI alone:
+The Service is a `NodePort` on `30090`, the same pattern as the Drupal sites:
 
 ```
-kubectl -n slipway port-forward svc/slipway 8080
+http://<node>:30090/      # e.g. http://jtweb:30090/ — prompts for the `auth` credentials
 ```
+
+Basic auth over plain HTTP sends the password in the clear. Put slipway behind
+Cloudflare (a proxied DNS record → `<node>:30090`) for TLS, and/or restrict the
+port to your address with the node's firewall.
+
 
 To expose it permanently (and so CI can reach `POST /api/releases`), give the
 Service `type: NodePort` and add it to whatever fronts the Drupal sites, the

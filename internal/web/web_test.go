@@ -293,6 +293,47 @@ func TestScheduleUpsertRejectsBadSpec(t *testing.T) {
 	}
 }
 
+func TestWithAuthGatesEverythingButReleases(t *testing.T) {
+	s := testServer(t)
+	s.basicAuth = "jt:s3cret"
+	s.releaseToken = "rtok"
+	h := s.withAuth(mux(s))
+
+	// No credentials → 401 with a challenge.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "" {
+		t.Fatalf("unauthenticated GET / = %d, want a 401 challenge", rec.Code)
+	}
+
+	// Wrong password → 401.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/grid", nil)
+	req.SetBasicAuth("jt", "wrong")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad password = %d, want 401", rec.Code)
+	}
+
+	// Right credentials → through.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/", nil)
+	req.SetBasicAuth("jt", "s3cret")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("good credentials = %d, want 200", rec.Code)
+	}
+
+	// POST /api/releases is exempt — it has its own bearer token.
+	rec = httptest.NewRecorder()
+	req = formPost("/api/releases", "image=x@sha256:"+strings.Repeat("a", 64)+"&ref=refs/tags/v1")
+	req.Header.Set("Authorization", "Bearer rtok")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("release with bearer token (no basic auth) = %d, want 201", rec.Code)
+	}
+}
+
 func TestConsoleNeedsEnvAndCmd(t *testing.T) {
 	s := testServer(t)
 	for _, body := range []string{"env=dev", "cmd=status", ""} {

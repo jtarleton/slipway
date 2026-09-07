@@ -53,6 +53,7 @@ Flags:
   -workload    name of the Drupal Deployment (default drupal)
   -container   container within that Deployment (default drupal)
   -addr        address for 'serve' to listen on (default :8080)
+  -auth        user:password for HTTP Basic auth on the web UI (env SLIPWAY_AUTH)
 `
 
 func main() {
@@ -104,6 +105,8 @@ func run(args []string) error {
 		addr       = fs.String("addr", ":8080", "address for 'serve' to listen on")
 		relToken   = fs.String("release-token", os.Getenv("SLIPWAY_RELEASE_TOKEN"),
 			"bearer token that enables POST /api/releases for CI (env SLIPWAY_RELEASE_TOKEN)")
+		auth = fs.String("auth", os.Getenv("SLIPWAY_AUTH"),
+			"user:password for HTTP Basic auth on the whole UI (env SLIPWAY_AUTH); empty leaves it open")
 	)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -141,7 +144,9 @@ func run(args []string) error {
 
 	if command == "serve" {
 		runner.Actor = "web"
-		return web.Serve(context.Background(), *addr, *relToken, runner)
+		return web.Serve(context.Background(), web.Config{
+			Addr: *addr, BasicAuth: *auth, ReleaseToken: *relToken,
+		}, runner)
 	}
 
 	// Reading the grid should fail fast; moving a database should not fail at

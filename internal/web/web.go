@@ -10,6 +10,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,15 +44,27 @@ const gridInterval = 15 * time.Second
 // at minute granularity, with a per-minute guard against double-firing.
 const cronInterval = 30 * time.Second
 
+// Config is what `slipway serve` needs beyond the Runner.
+type Config struct {
+	Addr string
+
+	// BasicAuth, "user:password", gates the whole UI and API with HTTP Basic
+	// auth when set. Leave empty only when something else fronts slipway with
+	// authentication — it can deploy, roll back, and exec into containers.
+	BasicAuth string
+
+	// ReleaseToken, if non-empty, enables POST /api/releases for CI to record
+	// builds — bearer token, and exempt from BasicAuth so CI needs only the one
+	// credential. Empty disables the endpoint.
+	ReleaseToken string
+}
+
 // Serve runs the web UI and the reconcile loop until the process is signalled.
-//
-// releaseToken, if non-empty, enables POST /api/releases for CI to record
-// builds; requests must carry it as a bearer token. Empty disables the endpoint.
-func Serve(ctx context.Context, addr, releaseToken string, runner *ops.Runner) error {
+func Serve(ctx context.Context, cfg Config, runner *ops.Runner) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	s := &server{runner: runner, hub: newHub(), releaseToken: releaseToken}
+	s := &server{runner: runner, hub: newHub(), releaseToken: cfg.ReleaseToken, basicAuth: cfg.BasicAuth}
 	// Route the Runner's progress to every browser. Single-flight (see start)
 	// means only one operation writes here at a time.
 	runner.Report = s.emit
@@ -59,9 +72,13 @@ func Serve(ctx context.Context, addr, releaseToken string, runner *ops.Runner) e
 	mux := http.NewServeMux()
 	s.routes(mux)
 
+	if s.basicAuth == "" {
+		log.Printf("slipway: WARNING — no -auth set; the UI and API are unauthenticated")
+	}
+
 	httpSrv := &http.Server{
-		Addr:         announcedAddr(addr),
-		Handler:      mux,
+		Addr:         announcedAddr(cfg.Addr),
+		Handler:      s.withAuth(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 0, // SSE responses are open-ended
 	}
@@ -70,7 +87,7 @@ func Serve(ctx context.Context, addr, releaseToken string, runner *ops.Runner) e
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Printf("slipway: listening on %s", addr)
+		log.Printf("slipway: listening on %s", cfg.Addr)
 		errc <- httpSrv.ListenAndServe()
 	}()
 
@@ -93,6 +110,34 @@ func Serve(ctx context.Context, addr, releaseToken string, runner *ops.Runner) e
 	}
 }
 
+// withAuth gates every request with HTTP Basic auth when basicAuth is set.
+// POST /api/releases is exempt — it carries its own bearer token so CI needs
+// only one credential.
+func (s *server) withAuth(next http.Handler) http.Handler {
+	if s.basicAuth == "" {
+		return next
+	}
+	user, pass, _ := strings.Cut(s.basicAuth, ":")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /healthz is for the kubelet probe; POST /api/releases carries its own
+		// bearer token. Everything else needs the basic-auth credentials.
+		if r.URL.Path == "/healthz" ||
+			(r.Method == http.MethodPost && r.URL.Path == "/api/releases") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok ||
+			subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="slipway"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func announcedAddr(addr string) string {
 	if addr == "" {
 		return ":8080"
@@ -104,6 +149,7 @@ type server struct {
 	runner       *ops.Runner
 	hub          *hub
 	releaseToken string // bearer token for POST /api/releases; "" disables it
+	basicAuth    string // "user:password" gating the whole UI; "" = open
 
 	mu      sync.Mutex
 	current string   // running operation's name, "" when idle
@@ -132,6 +178,7 @@ func (s *server) pushSnapshot(name, data string) {
 
 func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", s.handleIndex)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /events", s.handleEvents)
 	mux.HandleFunc("GET /api/grid", s.handleGrid)
 	mux.HandleFunc("GET /api/jobs", s.handleJobs)

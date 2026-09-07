@@ -99,10 +99,12 @@ cleaned up without someone deciding to.
 The scheduler and reconcile loop only run while `slipway serve` runs, so for
 schedules to be dependable it should be a workload, not a laptop process.
 `deploy/slipway/` has a Dockerfile (pure Go, distroless static) and manifests
-for its own namespace, a 1Gi PVC for the SQLite file, and least-privilege RBAC
-into the three Drupal namespaces — enough to read the grid, patch Deployments,
-scale, exec (`console`), and create the engine's Jobs, and nothing more.
-`deploy/slipway/README.md` has the build-and-apply steps.
+for its own namespace, a 1Gi PVC for the SQLite file, a NodePort Service, and
+least-privilege RBAC into the three Drupal namespaces — enough to read the grid,
+patch Deployments, scale, exec (`console`), and create the engine's Jobs, and
+nothing more. The UI has no login of its own; `serve -auth user:password`
+(env `SLIPWAY_AUTH`) puts HTTP Basic auth in front of everything but `/healthz`
+and the token-gated release hook. `deploy/slipway/README.md` has the steps.
 
 ## Design notes
 
