@@ -173,6 +173,70 @@ func TestSyncFilesNeedsAnObjectKey(t *testing.T) {
 	}
 }
 
+func TestSnapshotDumpsWithMariadbAndUploadsWithAWS(t *testing.T) {
+	spec, err := planner().SpecFor(jobWith(jobs.KindSnapshot, prod.ID, Params{
+		SnapshotKey: "s3://bucket/slipway/prod/db/123.sql.gz",
+	}))
+	if err != nil {
+		t.Fatalf("SpecFor: %v", err)
+	}
+
+	if spec.Init == nil {
+		t.Fatal("snapshot has no init container to run the dump")
+	}
+	if spec.Init.Image != DefaultImages().MariaDB {
+		t.Errorf("dump runs in %q, want the mariadb image", spec.Init.Image)
+	}
+	if spec.Init.EnvFromSecret != SecretDB {
+		t.Errorf("dump has no database secret: %q", spec.Init.EnvFromSecret)
+	}
+	if !contains(spec.Init.Command, "gzip") || !contains(spec.Init.Command, "/scratch/dump.sql.gz") {
+		t.Errorf("dump does not gzip into scratch: %v", spec.Init.Command)
+	}
+	if spec.Image != DefaultImages().AWSCLI {
+		t.Errorf("upload runs in %q, want the aws-cli image", spec.Image)
+	}
+	if spec.Env["OBJECT_KEY"] != "s3://bucket/slipway/prod/db/123.sql.gz" {
+		t.Errorf("OBJECT_KEY = %q", spec.Env["OBJECT_KEY"])
+	}
+	if spec.Scratch != "/scratch" {
+		t.Errorf("Scratch = %q", spec.Scratch)
+	}
+	if !contains(spec.Init.Command, "pipefail") {
+		t.Error("the dump does not set pipefail — a failed mysqldump would upload a truncated file")
+	}
+}
+
+func TestSnapshotNeedsAKey(t *testing.T) {
+	if _, err := planner().SpecFor(jobWith(jobs.KindSnapshot, prod.ID, Params{})); err == nil {
+		t.Error("planned a snapshot with no object key")
+	}
+}
+
+func TestRestoreFromSnapshotDownloadsThenLoads(t *testing.T) {
+	spec, err := planner().SpecFor(jobWith(jobs.KindRestore, stage.ID, Params{
+		SnapshotKey: "s3://bucket/slipway/stage/db/9.sql.gz",
+	}))
+	if err != nil {
+		t.Fatalf("SpecFor: %v", err)
+	}
+	if spec.Init == nil || spec.Init.Image != DefaultImages().AWSCLI {
+		t.Fatalf("download does not run in the aws-cli image: %+v", spec.Init)
+	}
+	if len(spec.Init.Mounts) == 0 || spec.Init.Mounts[0].Secret != SecretAWS {
+		t.Errorf("download init has no aws credentials: %+v", spec.Init.Mounts)
+	}
+	if spec.Image != DefaultImages().MariaDB {
+		t.Errorf("load runs in %q, want the mariadb image", spec.Image)
+	}
+	if !contains(spec.Command, "gunzip") {
+		t.Errorf("load does not decompress the dump: %v", spec.Command)
+	}
+	if spec.BackoffLimit != 0 {
+		t.Errorf("a restore from snapshot retried automatically (BackoffLimit=%d)", spec.BackoffLimit)
+	}
+}
+
 func TestUnknownEnvironmentAndKindAreRefused(t *testing.T) {
 	p := planner()
 

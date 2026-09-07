@@ -92,7 +92,8 @@ pod to resolve a digest from.
 
 ### `slipway deploy -env NAME -image REF`
 
-Deploy an image, wait for the rollout, then run the post-deploy update sequence.
+Snapshot the database, deploy an image, wait for the rollout, then run the
+post-deploy update sequence.
 
 ```
 slipway deploy -env stage -image ghcr.io/jtarleton/d11app@sha256:4d367eec328a…
@@ -101,8 +102,15 @@ slipway deploy -env stage -image ghcr.io/jtarleton/d11app@sha256:4d367eec328a…
 | Flag                  | Meaning                                                        |
 |-----------------------|---------------------------------------------------------------|
 | `-image REF`          | image to deploy (required)                                     |
+| `-no-snapshot`        | skip the pre-deploy database snapshot                          |
 | `-skip-update`        | patch and roll out only; do not run update hooks              |
 | `-skip-config-import` | run the update sequence but omit `drush config:import`        |
+
+A database snapshot is taken **before** anything is patched, and the image being
+replaced is recorded — this is what gives `slipway rollback` somewhere to go
+back to. A failed snapshot aborts the deploy; deploying with no way back defeats
+the purpose. `-no-snapshot` skips it deliberately (e.g. a code-only change you
+are certain of, or an environment whose database you do not care about).
 
 The update sequence runs behind maintenance mode:
 
@@ -123,7 +131,53 @@ deliberate — the error message says so.
 Pass a digest-pinned reference (`repo@sha256:…`). A bare tag is accepted with a
 warning, but what runs will not be traceable to a release.
 
-Times out after 15 minutes.
+Times out after 6 hours (the snapshot can be slow for a large database; a hung
+rollout is caught by the rollout's own progress deadline, not this one).
+
+### `slipway snapshot -env NAME`
+
+Dump an environment's database to object storage and record it.
+
+```
+slipway snapshot -env prod
+```
+
+Runs as one Job with two containers: a mariadb container writes a gzipped
+`mysqldump` into a job-local scratch volume, then an aws-cli container uploads it
+to `s3://…/slipway/<env>/db/<timestamp>.sql.gz`. The application keeps serving
+throughout — `--single-transaction` makes the dump consistent without locking.
+
+The control plane records where the dump went (the `snapshots` table); the file
+itself lives in object storage.
+
+### `slipway rollback -env NAME`
+
+Return an environment to its previous deployment.
+
+```
+slipway rollback -env stage              # re-deploy the previous image
+slipway rollback -env stage -with-data   # …and restore the snapshot from before that deploy
+```
+
+| Flag         | Meaning                                                              |
+|--------------|--------------------------------------------------------------------|
+| `-with-data` | also restore the database snapshot taken before that deploy         |
+
+By default rollback only re-patches the image — fast, and the common case is
+"the new build is broken, get the old one back". The database is left alone; if
+the deploy ran update hooks, it is still on the newer schema, and the command
+says so.
+
+`-with-data` additionally restores the pre-deploy snapshot: the app is scaled to
+zero, the snapshot is streamed back in (aws-cli downloads it, mariadb loads it),
+and the app is scaled back up on the old image. Use it when the deploy changed
+data, not just code — code and database return to the pre-deploy state together.
+
+Rollback walks the deploy log: a second rollback undoes the deployment before
+the one already rolled back. It only knows about deploys made through Slipway;
+if nothing is recorded, it is an error.
+
+Times out after 6 hours.
 
 ### `slipway copy-down -from ENV -to ENV`
 
@@ -276,12 +330,19 @@ environment (stage or dev). A confirm dialog opens:
 To copy *both* at once, or to copy from `stage` rather than `prod`, use
 **Manual operations** (below).
 
-### Pinning
+### Per-environment actions
 
-A Code cell that shows `tag — not traceable` has a **pin to running digest**
-link. Clicking it runs `slipway pin` for that environment: the spec is rewritten
-to the digest already running, changing nothing live but making the grid
-truthful.
+Under each **Code** cell:
+
+- **snapshot** — dump that environment's database to object storage
+  (`slipway snapshot`). Always available.
+- **roll back** — appears once a deploy has been made through Slipway. Opens a
+  dialog showing the image it would return to, with an "also restore the
+  database snapshot" checkbox (`slipway rollback [-with-data]`).
+- **pin** — appears when the cell is on a bare tag; rewrites the spec to the
+  running digest (`slipway pin`).
+
+The **Database** cell shows how many snapshots that environment has.
 
 ### Resume in-flight
 
@@ -334,7 +395,9 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |
 | POST   | `/api/pin`        | `env`                                                     |
-| POST   | `/api/deploy`     | `env`, `image`, `skip_update`, `skip_config_import`       |
+| POST   | `/api/deploy`     | `env`, `image`, `no_snapshot`, `skip_update`, `skip_config_import` |
+| POST   | `/api/snapshot`   | `env`                                                    |
+| POST   | `/api/rollback`   | `env`, `with_data`                                       |
 | POST   | `/api/copy-down`  | `from`, `to`, `skip_files`, `skip_db`, `clean`            |
 | POST   | `/api/resume`     | —                                                        |
 | POST   | `/api/cancel`     | `group`                                                   |
@@ -359,7 +422,9 @@ crash is recoverable:
 
 A deploy interrupted during its update sequence may leave the site in
 maintenance mode. That is deliberate — clear it only once you have confirmed the
-database is consistent (`drush state:set system.maintenance_mode 0`).
+database is consistent (`drush state:set system.maintenance_mode 0`), or
+`slipway rollback -env NAME -with-data` to return both code and database to the
+pre-deploy snapshot.
 
 ## Assumptions
 

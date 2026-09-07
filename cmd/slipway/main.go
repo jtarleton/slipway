@@ -25,7 +25,10 @@ const usage = `slipway — deployment control plane for Drupal on k3s
 
   slipway grid                     show what is running in every environment
   slipway pin   -env NAME          rewrite a tag-pinned Deployment to the digest it is already running
-  slipway deploy -env NAME -image REF   deploy an image, wait for rollout, run update hooks
+  slipway deploy -env NAME -image REF   snapshot the database, deploy, wait for rollout, run update hooks
+        -no-snapshot  skip the pre-deploy snapshot   -skip-update  skip update hooks
+  slipway snapshot -env NAME        dump the database to object storage and record it
+  slipway rollback -env NAME        re-deploy the previous image   -with-data  also restore its pre-deploy snapshot
   slipway copy-down -from prod -to stage   copy database and files down, sanitizing on arrival
         -skip-files  database only   -skip-db  files only   -clean  empty the target tree first (first seed)
   slipway resume                   re-attach to work left in flight
@@ -63,6 +66,8 @@ func run(args []string) error {
 		env        = fs.String("env", "", "environment name")
 		skipUpdate = fs.Bool("skip-update", false, "deploy code without running update hooks")
 		skipConfig = fs.Bool("skip-config-import", false, "omit config:import from the update sequence")
+		noSnapshot = fs.Bool("no-snapshot", false, "deploy without taking a pre-deploy database snapshot")
+		withData   = fs.Bool("with-data", false, "rollback: also restore the deploy's pre-deploy snapshot")
 		from       = fs.String("from", "", "source environment for copy-down")
 		to         = fs.String("to", "", "target environment for copy-down")
 		skipFiles  = fs.Bool("skip-files", false, "copy the database only, leaving files alone")
@@ -109,9 +114,9 @@ func run(args []string) error {
 	// one of them.
 	deadline := 30 * time.Second
 	switch command {
-	case "pin", "deploy":
+	case "pin":
 		deadline = 15 * time.Minute
-	case "copy-down", "resume":
+	case "deploy", "snapshot", "rollback", "copy-down", "resume":
 		deadline = 6 * time.Hour
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
@@ -123,7 +128,11 @@ func run(args []string) error {
 	case "pin":
 		return runner.Pin(ctx, *env)
 	case "deploy":
-		return runner.Deploy(ctx, *env, *image, *skipUpdate, *skipConfig)
+		return runner.Deploy(ctx, *env, *image, *skipUpdate, *skipConfig, *noSnapshot)
+	case "snapshot":
+		return runner.Snapshot(ctx, *env)
+	case "rollback":
+		return runner.Rollback(ctx, *env, *withData)
 	case "copy-down":
 		return runner.CopyDown(ctx, *from, *to, *skipFiles, *skipDB, *clean)
 	case "resume":

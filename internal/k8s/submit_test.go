@@ -109,6 +109,71 @@ func TestSubmitJobAttachesMounts(t *testing.T) {
 	}
 }
 
+func TestSubmitJobWiresAnInitContainerThroughScratch(t *testing.T) {
+	cs := fake.NewClientset()
+	spec := minimalSpec()
+	spec.Scratch = "/scratch"
+	spec.Init = &InitContainer{
+		Image:         "mariadb:latest",
+		Command:       []string{"bash", "-c", "mariadb-dump ... > /scratch/dump.sql.gz"},
+		EnvFromSecret: "db-credentials",
+		Mounts:        []Mount{{Name: "creds", Secret: "aws-backup-credentials", Path: "/root/.aws", ReadOnly: true}},
+	}
+	spec.Mounts = []Mount{{Name: "creds", Secret: "aws-backup-credentials", Path: "/root/.aws", ReadOnly: true}}
+
+	if err := NewWithInterface(cs).SubmitJob(context.Background(), prodNS, "snapjob", spec); err != nil {
+		t.Fatalf("SubmitJob: %v", err)
+	}
+	pod := getJob(t, cs, "snapjob").Spec.Template.Spec
+
+	if len(pod.InitContainers) != 1 {
+		t.Fatalf("got %d init containers, want 1", len(pod.InitContainers))
+	}
+	init := pod.InitContainers[0]
+	if !hasMount(init.VolumeMounts, "scratch", "/scratch") {
+		t.Errorf("init container is not mounting scratch: %+v", init.VolumeMounts)
+	}
+	if !hasMount(pod.Containers[0].VolumeMounts, "scratch", "/scratch") {
+		t.Errorf("main container is not mounting scratch: %+v", pod.Containers[0].VolumeMounts)
+	}
+	if init.EnvFrom == nil || init.EnvFrom[0].SecretRef.Name != "db-credentials" {
+		t.Errorf("init container is missing its db secret: %+v", init.EnvFrom)
+	}
+
+	// The creds secret is requested by both containers; the pod must carry one
+	// volume of that name, plus the scratch emptyDir.
+	names := map[string]int{}
+	for _, v := range pod.Volumes {
+		names[v.Name]++
+	}
+	if names["creds"] != 1 || names["scratch"] != 1 {
+		t.Errorf("volumes not deduped: %+v", names)
+	}
+	for _, v := range pod.Volumes {
+		if v.Name == "scratch" && v.EmptyDir == nil {
+			t.Error("scratch is not an emptyDir")
+		}
+	}
+}
+
+func TestSubmitJobRejectsAnInitContainerWithoutScratch(t *testing.T) {
+	spec := minimalSpec()
+	spec.Init = &InitContainer{Image: "x", Command: []string{"true"}}
+	err := NewWithInterface(fake.NewClientset()).SubmitJob(context.Background(), prodNS, "j", spec)
+	if err == nil {
+		t.Fatal("SubmitJob accepted an init container with no scratch volume to hand off through")
+	}
+}
+
+func hasMount(mounts []corev1.VolumeMount, name, path string) bool {
+	for _, m := range mounts {
+		if m.Name == name && m.MountPath == path {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSubmitJobRejectsAmbiguousMounts(t *testing.T) {
 	c := NewWithInterface(fake.NewClientset())
 

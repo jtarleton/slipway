@@ -82,9 +82,13 @@ func (r *Runner) Pin(ctx context.Context, name string) error {
 	return r.watch(ctx, env.Namespace)
 }
 
-// Deploy patches an environment to an image, waits for the rollout, then runs
-// the post-deploy update sequence unless it is skipped.
-func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, skipConfig bool) error {
+// Deploy snapshots the database, patches the environment to an image, waits for
+// the rollout, then runs the post-deploy update sequence unless it is skipped.
+//
+// The snapshot comes first and a failed snapshot aborts the deploy: the whole
+// point of taking it is to have something to roll back to, so deploying without
+// one defeats the exercise. Pass noSnapshot to skip it deliberately.
+func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, skipConfig, noSnapshot bool) error {
 	if image == "" {
 		return fmt.Errorf("deploy needs an image")
 	}
@@ -97,6 +101,25 @@ func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, ski
 		r.say("warning: %s is not digest-pinned; what runs here will not be traceable to a release", image)
 	}
 
+	// What is running now, captured before the patch so a rollback knows where
+	// to go back to.
+	wl, err := r.Client.Workload(ctx, env.Namespace, r.Workload)
+	if err != nil {
+		return err
+	}
+	fromImage := wl.Image
+
+	var snapshotID *int64
+	if noSnapshot {
+		r.say("  pre-deploy snapshot skipped")
+	} else {
+		id, err := r.snapshotDatabase(ctx, env)
+		if err != nil {
+			return fmt.Errorf("pre-deploy snapshot failed, not deploying: %w", err)
+		}
+		snapshotID = id
+	}
+
 	r.say("%s: deploying %s", name, image)
 	if err := r.Client.PatchImage(ctx, env.Namespace, r.Workload, r.Container, image); err != nil {
 		return err
@@ -104,11 +127,156 @@ func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, ski
 	if err := r.watch(ctx, env.Namespace); err != nil {
 		return err
 	}
+
+	if _, err := r.DB.LogDeploy(env.ID, fromImage, image, snapshotID, "slipway"); err != nil {
+		r.say("warning: deploy succeeded but was not recorded for rollback: %v", err)
+	}
+
 	if skipUpdate {
 		r.say("  update hooks skipped")
 		return nil
 	}
 	return r.runUpdate(ctx, env, image, skipConfig)
+}
+
+// Snapshot dumps an environment's database to object storage and records it.
+func (r *Runner) Snapshot(ctx context.Context, name string) error {
+	env, err := r.env(name)
+	if err != nil {
+		return err
+	}
+	id, err := r.snapshotDatabase(ctx, env)
+	if err != nil {
+		return err
+	}
+	r.say("%s: snapshot #%d recorded", name, *id)
+	return nil
+}
+
+// snapshotDatabase queues and drives a KindSnapshot job, then records where the
+// dump landed. It returns the snapshot's row id.
+func (r *Runner) snapshotDatabase(ctx context.Context, env store.Environment) (*int64, error) {
+	now := time.Now().Unix()
+	key := fmt.Sprintf("s3://amazon-jtarleton-s3/s3fs-private/slipway/%s/db/%d.sql.gz", env.Name, now)
+
+	payload, err := drupal.Params{SnapshotKey: key}.Encode()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.DB.CreateJob(store.Job{
+		EnvID:      env.ID,
+		GroupID:    fmt.Sprintf("snapshot-%s-%d", env.Name, now),
+		Seq:        0,
+		Kind:       jobs.KindSnapshot,
+		K8sJobName: jobs.Name(env.Name, now, 0, jobs.KindSnapshot),
+		Payload:    payload,
+	}); err != nil {
+		return nil, err
+	}
+
+	r.say("  snapshotting %s database → %s", env.Name, key)
+	if err := r.RunSequence(ctx); err != nil {
+		return nil, err
+	}
+
+	id, err := r.DB.RecordSnapshot(env.ID, key, false)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+// Rollback returns an environment to its previous deployment.
+//
+// By default it only re-patches the image — fast, and the common case is "the
+// new build is broken, get the old one back". withData additionally restores
+// the database snapshot taken before that deploy, scaling the app down for the
+// load; use it when the deploy changed data, not just code.
+func (r *Runner) Rollback(ctx context.Context, name string, withData bool) error {
+	env, err := r.env(name)
+	if err != nil {
+		return err
+	}
+
+	dep, err := r.DB.LastDeploy(env.ID)
+	if err != nil {
+		return fmt.Errorf("%s: no recorded deployment to roll back (deploy through slipway first): %w", name, err)
+	}
+	if dep.FromImage == "" {
+		return fmt.Errorf("%s: the last deploy recorded no prior image — nothing to roll back to", name)
+	}
+	if withData && dep.SnapshotID == nil {
+		return fmt.Errorf("%s: -with-data asked for, but that deploy took no snapshot", name)
+	}
+
+	r.say("%s: rolling back %s → %s", name, short(dep.ToImage), short(dep.FromImage))
+
+	if withData {
+		snap, err := r.DB.Snapshot(*dep.SnapshotID)
+		if err != nil {
+			return err
+		}
+		r.say("  scaling %s/%s to 0 for the database restore", env.Namespace, r.Workload)
+		if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 0); err != nil {
+			return err
+		}
+		if err := r.waitForPodsGone(ctx, env.Namespace); err != nil {
+			return err
+		}
+		if err := r.restoreFromSnapshot(ctx, env, snap.ObjectKey); err != nil {
+			return err
+		}
+	}
+
+	if err := r.Client.PatchImage(ctx, env.Namespace, r.Workload, r.Container, dep.FromImage); err != nil {
+		return err
+	}
+	if withData {
+		if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 1); err != nil {
+			return err
+		}
+	}
+	if err := r.watch(ctx, env.Namespace); err != nil {
+		return err
+	}
+
+	if err := r.DB.MarkRolledBack(dep.ID); err != nil {
+		r.say("warning: rollback done but not marked — the next rollback may repeat it: %v", err)
+	}
+	if !withData {
+		r.say("  NOTE: code is back on %s but the database was not touched. If the deploy "+
+			"ran update hooks, roll back again with -with-data or restore a snapshot by hand.", short(dep.FromImage))
+	}
+	return nil
+}
+
+// restoreFromSnapshot queues and drives a KindRestore job that loads a database
+// snapshot from object storage.
+func (r *Runner) restoreFromSnapshot(ctx context.Context, env store.Environment, key string) error {
+	now := time.Now().Unix()
+	payload, err := drupal.Params{SnapshotKey: key}.Encode()
+	if err != nil {
+		return err
+	}
+	if _, err := r.DB.CreateJob(store.Job{
+		EnvID:      env.ID,
+		GroupID:    fmt.Sprintf("restore-%s-%d", env.Name, now),
+		Seq:        0,
+		Kind:       jobs.KindRestore,
+		K8sJobName: jobs.Name(env.Name, now, 0, jobs.KindRestore),
+		Payload:    payload,
+	}); err != nil {
+		return err
+	}
+	r.say("  restoring %s database from %s", env.Name, key)
+	return r.RunSequence(ctx)
+}
+
+func short(image string) string {
+	if d := k8s.Digest(image); d != "" {
+		return k8s.Repository(image) + "@" + d[:19]
+	}
+	return image
 }
 
 // runUpdate queues the post-deploy sequence and drives it.

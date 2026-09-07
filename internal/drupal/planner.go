@@ -70,6 +70,10 @@ type Params struct {
 	// SkipConfigImport omits config:import from the update sequence, for sites
 	// that do not keep configuration in code.
 	SkipConfigImport bool `json:"skip_config_import,omitempty"`
+
+	// SnapshotKey is the full s3:// key for a database snapshot. KindSnapshot
+	// writes it; KindRestore reads from it when SourceNamespace is empty.
+	SnapshotKey string `json:"snapshot_key,omitempty"`
 }
 
 // Encode serializes params for storage on a job record.
@@ -117,7 +121,12 @@ func (p *Planner) SpecFor(job store.Job) (k8s.JobSpec, error) {
 	switch job.Kind {
 	case jobs.KindUpdatedb:
 		return p.update(env, params)
+	case jobs.KindSnapshot:
+		return p.snapshot(env, params)
 	case jobs.KindRestore:
+		if params.SnapshotKey != "" {
+			return p.restoreSnapshot(env, params)
+		}
 		return p.copyDatabase(env, params)
 	case jobs.KindSanitize:
 		return p.sanitize(env, params)
@@ -218,6 +227,97 @@ echo "copied $SRC_HOST -> $DST_HOST"
 		EnvFromSecret: SecretDB,
 		// A restore is never retried automatically. Re-running one halfway
 		// through leaves the target in a worse state than failing loudly.
+		BackoffLimit:     0,
+		ActiveDeadline:   30 * time.Minute,
+		TTLAfterFinished: time.Hour,
+	}, nil
+}
+
+// snapshot dumps an environment's database and ships it to object storage.
+//
+// Two containers, one Job: the mariadb init container writes a gzipped dump into
+// a job-local emptyDir, then the aws-cli main container uploads it. Neither
+// image carries the other's tools, and the dump never lands on a
+// PersistentVolume — the same shape the cluster's own backup CronJob uses.
+func (p *Planner) snapshot(env store.Environment, params Params) (k8s.JobSpec, error) {
+	if params.SnapshotKey == "" {
+		return k8s.JobSpec{}, fmt.Errorf("snapshot %s: no object key", env.Name)
+	}
+
+	const dump = `
+DUMP="$(command -v mariadb-dump || command -v mysqldump)"
+[ -n "$DUMP" ] || { echo "no mariadb client in this image" >&2; exit 1; }
+"$DUMP" --single-transaction --routines --triggers --events \
+  -h ` + ServiceDatabase + ` -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" \
+  | gzip -9 > /scratch/dump.sql.gz
+echo "dumped $(wc -c < /scratch/dump.sql.gz) bytes"
+`
+	const upload = `
+[ -s /scratch/dump.sql.gz ] || { echo "the dump step produced nothing" >&2; exit 1; }
+aws s3 cp /scratch/dump.sql.gz "$OBJECT_KEY" --only-show-errors
+echo "snapshot uploaded $OBJECT_KEY ($(wc -c < /scratch/dump.sql.gz) bytes)"
+`
+
+	return k8s.JobSpec{
+		Image:   p.images.AWSCLI,
+		Command: []string{"bash", "-eo", "pipefail", "-c", upload},
+		Env: map[string]string{
+			"OBJECT_KEY": params.SnapshotKey, "AWS_DEFAULT_REGION": "us-east-1", "HOME": "/root",
+		},
+		Scratch: "/scratch",
+		Init: &k8s.InitContainer{
+			Image:         p.images.MariaDB,
+			Command:       []string{"bash", "-eo", "pipefail", "-c", dump},
+			EnvFromSecret: SecretDB,
+		},
+		Mounts: []k8s.Mount{
+			{Name: "aws-creds", Secret: SecretAWS, Path: "/root/.aws", ReadOnly: true},
+		},
+		BackoffLimit:     1,
+		ActiveDeadline:   30 * time.Minute,
+		TTLAfterFinished: time.Hour,
+	}, nil
+}
+
+// restoreSnapshot loads a database snapshot from object storage back into an
+// environment. It is the mirror of snapshot: aws-cli downloads into scratch,
+// then mariadb streams it in.
+func (p *Planner) restoreSnapshot(env store.Environment, params Params) (k8s.JobSpec, error) {
+	if params.SnapshotKey == "" {
+		return k8s.JobSpec{}, fmt.Errorf("restore %s: no snapshot key", env.Name)
+	}
+
+	const download = `
+aws s3 cp "$OBJECT_KEY" /scratch/dump.sql.gz --only-show-errors
+[ -s /scratch/dump.sql.gz ] || { echo "snapshot $OBJECT_KEY did not download" >&2; exit 1; }
+echo "downloaded $OBJECT_KEY"
+`
+	const load = `
+CLIENT="$(command -v mariadb || command -v mysql)"
+[ -n "$CLIENT" ] || { echo "no mariadb client in this image" >&2; exit 1; }
+gunzip -c /scratch/dump.sql.gz \
+  | "$CLIENT" -h ` + ServiceDatabase + ` -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE"
+echo "restored $SNAPSHOT_KEY"
+`
+
+	return k8s.JobSpec{
+		Image:         p.images.MariaDB,
+		Command:       []string{"bash", "-eo", "pipefail", "-c", load},
+		Env:           map[string]string{"SNAPSHOT_KEY": params.SnapshotKey},
+		EnvFromSecret: SecretDB,
+		Scratch:       "/scratch",
+		Init: &k8s.InitContainer{
+			Image:   p.images.AWSCLI,
+			Command: []string{"bash", "-eo", "pipefail", "-c", download},
+			Env: map[string]string{
+				"OBJECT_KEY": params.SnapshotKey, "AWS_DEFAULT_REGION": "us-east-1", "HOME": "/root",
+			},
+			Mounts: []k8s.Mount{
+				{Name: "aws-creds", Secret: SecretAWS, Path: "/root/.aws", ReadOnly: true},
+			},
+		},
+		// A restore is never retried automatically — re-running one halfway
+		// through leaves the database in a worse state than failing loudly.
 		BackoffLimit:     0,
 		ActiveDeadline:   30 * time.Minute,
 		TTLAfterFinished: time.Hour,

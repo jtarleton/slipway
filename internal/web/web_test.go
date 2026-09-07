@@ -146,6 +146,48 @@ func TestGridReportsWhenDataWasLastCopiedIn(t *testing.T) {
 	}
 }
 
+func TestGridExposesSnapshotsAndRollbackTarget(t *testing.T) {
+	s := testServer(t)
+	envs, _ := s.runner.DB.Environments()
+	prod := envs[1] // testServer seeds dev then prod
+
+	snapID, _ := s.runner.DB.RecordSnapshot(prod.ID, "s3://b/prod/db/1.sql.gz", false)
+	if _, err := s.runner.DB.LogDeploy(prod.ID, "reg/d@sha256:old", "reg/d@sha256:new", &snapID, "t"); err != nil {
+		t.Fatalf("LogDeploy: %v", err)
+	}
+
+	rows, err := s.gridRows(context.Background())
+	if err != nil {
+		t.Fatalf("gridRows: %v", err)
+	}
+	if rows[1].Snapshots != 1 {
+		t.Errorf("prod row Snapshots = %d, want 1", rows[1].Snapshots)
+	}
+	if rows[1].RollbackTo != "reg/d@sha256:old" {
+		t.Errorf("prod row RollbackTo = %q, want the prior image", rows[1].RollbackTo)
+	}
+	if rows[0].RollbackTo != "" || rows[0].Snapshots != 0 {
+		t.Errorf("dev row should have no snapshots or rollback target: %+v", rows[0])
+	}
+}
+
+func TestRollbackWithNothingToUndoReportsIt(t *testing.T) {
+	s := testServer(t)
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/rollback", "env=dev"))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	waitFor(t, func() bool {
+		for _, l := range s.stateView().Log {
+			if strings.Contains(l, "no recorded deployment to roll back") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 func TestCopyDownRejectsCopyingNothing(t *testing.T) {
 	s := testServer(t)
 	rec := httptest.NewRecorder()

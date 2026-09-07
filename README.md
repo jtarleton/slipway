@@ -24,14 +24,16 @@ required it.
 |---|---|
 | `slipway grid` | what is running in every environment, resolved to a digest |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
-| `slipway deploy -env NAME -image REF` | patch and wait for the rollout |
+| `slipway deploy -env NAME -image REF` | snapshot the database, patch, wait for the rollout, run update hooks |
+| `slipway snapshot -env NAME` | dump the database to object storage and record it |
+| `slipway rollback -env NAME` | re-deploy the previous image; `-with-data` also restores its pre-deploy snapshot |
 | `slipway copy-down -from prod -to stage` | files, database, sanitize — in order; `-skip-files` / `-skip-db` for one lane |
 | `slipway resume` | re-attach to work left in flight |
 | `slipway cancel -group NAME` | release a stalled sequence, cancelling the steps wedged behind a failure |
 | `slipway serve` | web UI over the same operations, plus a background reconcile loop |
 
-Not built yet: the update-hook sequence's own tests against a live cluster,
-snapshots and rollback.
+Not built yet: the update-hook sequence's own tests against a live cluster; the
+releases/deployments tables and a GitHub Actions integration to populate them.
 
 ## The web UI
 
@@ -95,6 +97,14 @@ crash in that gap leaves a recoverable record.
 **Sequences stall where they fail.** `Runnable()` only offers a job whose
 predecessors have all succeeded, which is what stops a sanitize running against
 a database that never finished loading.
+
+**Every deploy takes a snapshot first.** `deploy` dumps the database to object
+storage and records the image it is replacing before it patches anything, so
+`rollback` always has somewhere to go back to. A failed snapshot aborts the
+deploy — deploying with no way back defeats the point. The dump-and-upload runs
+as one Job with two containers sharing an `emptyDir`: mariadb writes a gzipped
+dump into it, then aws-cli ships it out. Neither image carries the other's
+tools, and the dump never lands on a PersistentVolume.
 
 ## Assumptions
 

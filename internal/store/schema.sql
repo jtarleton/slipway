@@ -80,6 +80,23 @@ CREATE TABLE IF NOT EXISTS audit (
     at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- deploy_log records each code deployment so a rollback knows what was running
+-- before and which pre-deploy snapshot to restore. It is the pragmatic
+-- stand-in for the releases/deployments tables above, which wait on a GitHub
+-- Actions integration that records git provenance.
+CREATE TABLE IF NOT EXISTS deploy_log (
+    id          INTEGER PRIMARY KEY,
+    env_id      INTEGER NOT NULL REFERENCES environments(id),
+    from_image  TEXT    NOT NULL DEFAULT '',   -- what was running before this deploy
+    to_image    TEXT    NOT NULL,              -- what this deploy put in place
+    snapshot_id INTEGER REFERENCES snapshots(id),  -- the pre-deploy database snapshot, if one was taken
+    rolled_back INTEGER NOT NULL DEFAULT 0,     -- set once this deploy has been rolled back
+    actor       TEXT    NOT NULL DEFAULT '',
+    at          TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_deploy_log_env ON deploy_log(env_id, at DESC);
+
 -- The reconciler's hot path: every job not yet in a terminal state.
 CREATE INDEX IF NOT EXISTS idx_jobs_unfinished
     ON jobs(state) WHERE state NOT IN ('succeeded', 'failed', 'cancelled', 'orphaned');

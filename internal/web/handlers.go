@@ -12,10 +12,11 @@ import (
 var indexHTML []byte
 
 // deployDeadline and copyDownDeadline mirror the CLI's per-command timeouts in
-// cmd/slipway: a rollout should not wait forever, and a database move should not
-// fail for want of patience.
+// cmd/slipway. Deploy now takes a database snapshot first, so it gets the long
+// deadline too; a genuinely hung rollout is caught by the rollout's own
+// progress deadline, not by this.
 const (
-	deployDeadline   = 15 * time.Minute
+	deployDeadline   = 6 * time.Hour
 	copyDownDeadline = 6 * time.Hour
 )
 
@@ -110,8 +111,32 @@ func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	skipUpdate := r.FormValue("skip_update") == "true"
 	skipConfig := r.FormValue("skip_config_import") == "true"
+	noSnapshot := r.FormValue("no_snapshot") == "true"
 	s.launch(w, "deploy "+env, deployDeadline, func(ctx context.Context) error {
-		return s.runner.Deploy(ctx, env, image, skipUpdate, skipConfig)
+		return s.runner.Deploy(ctx, env, image, skipUpdate, skipConfig, noSnapshot)
+	})
+}
+
+func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	env := r.FormValue("env")
+	if env == "" {
+		http.Error(w, "snapshot needs env", http.StatusBadRequest)
+		return
+	}
+	s.launch(w, "snapshot "+env, copyDownDeadline, func(ctx context.Context) error {
+		return s.runner.Snapshot(ctx, env)
+	})
+}
+
+func (s *server) handleRollback(w http.ResponseWriter, r *http.Request) {
+	env := r.FormValue("env")
+	if env == "" {
+		http.Error(w, "rollback needs env", http.StatusBadRequest)
+		return
+	}
+	withData := r.FormValue("with_data") == "true"
+	s.launch(w, "rollback "+env, copyDownDeadline, func(ctx context.Context) error {
+		return s.runner.Rollback(ctx, env, withData)
 	})
 }
 

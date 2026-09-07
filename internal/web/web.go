@@ -127,6 +127,8 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("POST /api/pin", s.handlePin)
 	mux.HandleFunc("POST /api/deploy", s.handleDeploy)
+	mux.HandleFunc("POST /api/snapshot", s.handleSnapshot)
+	mux.HandleFunc("POST /api/rollback", s.handleRollback)
 	mux.HandleFunc("POST /api/copy-down", s.handleCopyDown)
 	mux.HandleFunc("POST /api/resume", s.handleResume)
 	mux.HandleFunc("POST /api/cancel", s.handleCancel)
@@ -280,6 +282,9 @@ type gridRow struct {
 
 	DBSynced    string `json:"db_synced"`    // when a database was last copied into this env
 	FilesSynced string `json:"files_synced"` // when files were last copied into this env
+
+	Snapshots  int    `json:"snapshots"`   // how many database snapshots are recorded for this env
+	RollbackTo string `json:"rollback_to"` // image the last deploy would roll back to ("" if nothing to undo)
 }
 
 func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
@@ -295,7 +300,7 @@ func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
 
 	rows := make([]gridRow, 0, len(cells))
 	for _, c := range cells {
-		rows = append(rows, gridRow{
+		row := gridRow{
 			Env:         c.Env.Name,
 			Namespace:   c.Env.Namespace,
 			Host:        c.Env.IngressHost,
@@ -308,7 +313,14 @@ func (s *server) gridRows(ctx context.Context) ([]gridRow, error) {
 			State:       grid.State(c.Workload),
 			DBSynced:    dbSync[c.Env.ID],
 			FilesSynced: filesSync[c.Env.ID],
-		})
+		}
+		if snaps, err := s.runner.DB.SnapshotsFor(c.Env.ID); err == nil {
+			row.Snapshots = len(snaps)
+		}
+		if dep, err := s.runner.DB.LastDeploy(c.Env.ID); err == nil && dep.FromImage != "" {
+			row.RollbackTo = dep.FromImage
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }

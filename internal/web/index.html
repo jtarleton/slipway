@@ -81,12 +81,14 @@
   .chip .v { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   .chip .m { font-size: 11px; color: var(--dim); }
   .chip .m.loose { color: var(--warn); }
-  .chip .pin {
-    align-self: flex-start; margin-top: 4px; font-size: 11px; color: var(--blue);
-    background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline;
-  }
   .chip.none { cursor: default; border-left-color: var(--line); }
   .chip.none .v { color: var(--dim); }
+  .acts { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+  .act {
+    margin: 0; font-size: 11px; color: var(--blue); background: none; border: 0;
+    padding: 0; cursor: pointer; text-decoration: underline;
+  }
+  .act:hover { color: var(--blue-dark); }
 
   /* drag affordances */
   .matrix.dragging .chip:not(.dragging) { cursor: default; }
@@ -195,6 +197,7 @@
     <div class="hint">
       <span><span class="swatch" style="background:var(--code)"></span><b>Code</b> — drag onto a later environment to deploy it there</span>
       <span><span class="swatch" style="background:var(--data)"></span><b>Database</b> · <span class="swatch" style="background:var(--files)"></span><b>Files</b> — drag onto an earlier environment to copy down</span>
+      <span>Each Code cell also has <b>snapshot</b> and, after a deploy, <b>roll back</b>.</span>
     </div>
   </section>
 
@@ -306,25 +309,31 @@
     const attrs = `data-env="${esc(r.env)}" data-rank="${r.rank}"`;
     if (artifact === "code") {
       const canDrag = !!r.promote && !running;
+      const actions = [`<button class="act" data-snapshot="${esc(r.env)}">snapshot</button>`];
+      if (r.rollback_to) actions.push(
+        `<button class="act" data-rollback="${esc(r.env)}" data-rollback-to="${esc(r.rollback_to)}">roll back</button>`);
+      if (!r.pinned) actions.push(`<button class="act" data-pin="${esc(r.env)}">pin</button>`);
       return `<div ${attrs}>
         <div class="chip" data-artifact="code" data-env="${esc(r.env)}" data-rank="${r.rank}"
              data-promote="${esc(r.promote)}" draggable="${canDrag}">
           <span class="v">${esc(r.code)}</span>
           <span class="m ${r.pinned ? '' : 'loose'}">${r.pinned ? 'pinned' : 'tag — not traceable'}</span>
-          ${r.pinned ? '' : `<button class="pin" data-pin="${esc(r.env)}">pin to running digest</button>`}
-        </div></div>`;
+        </div>
+        <div class="acts">${actions.join("")}</div></div>`;
     }
     const when = artifact === "database" ? r.db_synced : r.files_synced;
+    const snaps = artifact === "database" && r.snapshots
+      ? `<span class="m">${r.snapshots} snapshot${r.snapshots === 1 ? "" : "s"}</span>` : "";
     if (r.prod) {
       return `<div ${attrs}><div class="chip ${when ? '' : 'none'}" data-artifact="${artifact}"
         data-env="${esc(r.env)}" data-rank="${r.rank}" draggable="${!running}">
         <span class="v">source of record</span>
-        <span class="m">drag to an earlier env</span></div></div>`;
+        <span class="m">drag to an earlier env</span>${snaps}</div></div>`;
     }
     return `<div ${attrs}><div class="chip none" data-artifact="${artifact}"
       data-env="${esc(r.env)}" data-rank="${r.rank}" draggable="false">
       <span class="v">${when ? 'copied' : 'not copied'}</span>
-      <span class="m">${when ? esc(fmtWhen(when)) : '—'}</span></div></div>`;
+      <span class="m">${when ? esc(fmtWhen(when)) : '—'}</span>${snaps}</div></div>`;
   }
 
   // ---- drag & drop ----------------------------------------------------
@@ -383,38 +392,67 @@
   }
 
   // ---- confirm modal -------------------------------------------------
-  function openConfirm(d, target) {
-    const body = $("m-body");
-    let title, rows, extra = "", run;
-
-    if (d.artifact === "code") {
-      title = `Deploy code to ${target}`;
-      rows = [["From", d.env], ["To", target], ["Image", `<span class="mono">${esc(d.promote)}</span>`]];
-      extra = `
-        <label class="chk"><input type="checkbox" id="o-skipupd"> skip update hooks</label>
-        <label class="chk"><input type="checkbox" id="o-skipcfg"> skip config:import</label>`;
-      run = () => post("/api/deploy", {
-        env: target, image: d.promote,
-        skip_update: $("o-skipupd").checked, skip_config_import: $("o-skipcfg").checked,
-      });
-    } else if (d.artifact === "database") {
-      title = `Copy database to ${target}`;
-      rows = [["From", d.env], ["To", target]];
-      extra = `<div class="note">The copy is sanitized on arrival — <span class="mono">drush sql:sanitize</span>
-        scrubs core user and session data. Custom tables are not touched.</div>`;
-      run = () => post("/api/copy-down", { from: d.env, to: target, skip_files: true });
-    } else {
-      title = `Copy files to ${target}`;
-      rows = [["From", d.env], ["To", target]];
-      extra = `<label class="chk"><input type="checkbox" id="o-clean"> empty the target file tree first (first seed only)</label>`;
-      run = () => post("/api/copy-down", { from: d.env, to: target, skip_db: true, clean: $("o-clean").checked });
-    }
-
+  function confirmOp({ title, kv, extra = "", run }) {
     $("m-title").textContent = title;
-    body.innerHTML = rows.map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span class="mono">${v}</span></div>`).join("") + extra;
+    $("m-body").innerHTML =
+      (kv || []).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span class="mono">${v}</span></div>`).join("") + extra;
     $("overlay").hidden = false;
     $("m-confirm").onclick = () => { const go = run; closeModal(); go(); };
   }
+
+  function openConfirm(d, target) {
+    if (d.artifact === "code") {
+      return confirmOp({
+        title: `Deploy code to ${target}`,
+        kv: [["From", d.env], ["To", target], ["Image", `<span class="mono">${esc(d.promote)}</span>`]],
+        extra: `
+          <label class="chk"><input type="checkbox" id="o-nosnap"> skip the pre-deploy database snapshot</label>
+          <label class="chk"><input type="checkbox" id="o-skipupd"> skip update hooks</label>
+          <label class="chk"><input type="checkbox" id="o-skipcfg"> skip config:import</label>`,
+        run: () => post("/api/deploy", {
+          env: target, image: d.promote, no_snapshot: $("o-nosnap").checked,
+          skip_update: $("o-skipupd").checked, skip_config_import: $("o-skipcfg").checked,
+        }),
+      });
+    }
+    if (d.artifact === "database") {
+      return confirmOp({
+        title: `Copy database to ${target}`,
+        kv: [["From", d.env], ["To", target]],
+        extra: `<div class="note">The copy is sanitized on arrival — <span class="mono">drush sql:sanitize</span>
+          scrubs core user and session data. Custom tables are not touched.</div>`,
+        run: () => post("/api/copy-down", { from: d.env, to: target, skip_files: true }),
+      });
+    }
+    return confirmOp({
+      title: `Copy files to ${target}`,
+      kv: [["From", d.env], ["To", target]],
+      extra: `<label class="chk"><input type="checkbox" id="o-clean"> empty the target file tree first (first seed only)</label>`,
+      run: () => post("/api/copy-down", { from: d.env, to: target, skip_db: true, clean: $("o-clean").checked }),
+    });
+  }
+
+  function snapshotEnv(env) {
+    confirmOp({
+      title: `Snapshot ${env} database`,
+      kv: [["Environment", env]],
+      extra: `<div class="note">Dumps the database and uploads it to object storage. The app keeps serving.</div>`,
+      run: () => post("/api/snapshot", { env }),
+    });
+  }
+
+  function rollbackEnv(env, to) {
+    confirmOp({
+      title: `Roll back ${env}`,
+      kv: [["Environment", env], ["Back to", `<span class="mono">${esc(to)}</span>`]],
+      extra: `<label class="chk"><input type="checkbox" id="o-withdata">
+          also restore the database snapshot taken before that deploy (scales the app down)</label>
+        <div class="note">Without the checkbox only the image is rolled back — if the deploy ran update
+          hooks, the database is still on the newer schema.</div>`,
+      run: () => post("/api/rollback", { env, with_data: $("o-withdata").checked }),
+    });
+  }
+
   function closeModal() { $("overlay").hidden = true; }
   $("m-cancel").onclick = closeModal;
   $("overlay").addEventListener("click", (e) => { if (e.target === $("overlay")) closeModal(); });
@@ -431,11 +469,15 @@
     if (!res.ok) appendLog({ line: "! " + msg, at: now() });
   }
 
-  // ---- pin ---------------------------------------------------------
+  // ---- per-env actions (pin / snapshot / rollback) ----------------
   $("matrix").addEventListener("click", (e) => {
-    const env = e.target.getAttribute && e.target.getAttribute("data-pin");
-    if (!env || running) return;
-    post("/api/pin", { env });
+    if (running || !e.target.getAttribute) return;
+    const pin = e.target.getAttribute("data-pin");
+    const snap = e.target.getAttribute("data-snapshot");
+    const rb = e.target.getAttribute("data-rollback");
+    if (pin) post("/api/pin", { env: pin });
+    else if (snap) snapshotEnv(snap);
+    else if (rb) rollbackEnv(rb, e.target.getAttribute("data-rollback-to"));
   });
   $("resume-btn").addEventListener("click", () => post("/api/resume", {}));
 
@@ -488,8 +530,10 @@
     running = !!st.running;
     $("running").textContent = running ? "▶ " + (st.operation || "running") : "";
     document.querySelectorAll("form .btn, #resume-btn").forEach(b => b.disabled = running);
-    // re-render the matrix so draggability reflects the run state
+    // re-render the matrix so draggability and the per-env action buttons
+    // reflect the run state
     if (lastGrid.length) renderGrid(lastGrid);
+    document.querySelectorAll(".act").forEach(b => b.disabled = running);
     const log = $("log");
     log.innerHTML = "";
     (st.log || []).forEach(line => appendLog({ line, at: "" }));

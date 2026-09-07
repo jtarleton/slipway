@@ -362,6 +362,76 @@ func TestStallsIgnoresAFailureWithNothingWaiting(t *testing.T) {
 	}
 }
 
+func TestSnapshotsRoundTrip(t *testing.T) {
+	db := open(t)
+	envID := seedEnv(t, db)
+
+	a, err := db.RecordSnapshot(envID, "s3://b/prod/db/1.sql.gz", false)
+	if err != nil {
+		t.Fatalf("RecordSnapshot: %v", err)
+	}
+	if _, err := db.RecordSnapshot(envID, "s3://b/prod/db/2.sql.gz", true); err != nil {
+		t.Fatalf("RecordSnapshot: %v", err)
+	}
+	if _, err := db.RecordSnapshot(envID, "s3://b/prod/db/1.sql.gz", false); err == nil {
+		t.Error("RecordSnapshot allowed a duplicate object key")
+	}
+
+	list, err := db.SnapshotsFor(envID)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("SnapshotsFor = %d (err %v), want 2", len(list), err)
+	}
+
+	got, err := db.Snapshot(a)
+	if err != nil || got.ObjectKey != "s3://b/prod/db/1.sql.gz" || got.Sanitized {
+		t.Errorf("Snapshot(%d) = %+v, %v", a, got, err)
+	}
+}
+
+func TestDeployLogAndRollbackTarget(t *testing.T) {
+	db := open(t)
+	envID := seedEnv(t, db)
+
+	if _, err := db.LastDeploy(envID); err == nil {
+		t.Error("LastDeploy returned a row before anything was deployed")
+	}
+
+	snapID, _ := db.RecordSnapshot(envID, "s3://b/prod/db/pre.sql.gz", false)
+	first, err := db.LogDeploy(envID, "repo@sha256:old", "repo@sha256:new", &snapID, "tester")
+	if err != nil {
+		t.Fatalf("LogDeploy: %v", err)
+	}
+
+	dep, err := db.LastDeploy(envID)
+	if err != nil {
+		t.Fatalf("LastDeploy: %v", err)
+	}
+	if dep.ID != first || dep.FromImage != "repo@sha256:old" || dep.SnapshotID == nil || *dep.SnapshotID != snapID {
+		t.Fatalf("LastDeploy = %+v, want the recorded deploy with its snapshot", dep)
+	}
+
+	// A second deploy shadows the first.
+	if _, err := db.LogDeploy(envID, "repo@sha256:new", "repo@sha256:newer", nil, "tester"); err != nil {
+		t.Fatalf("LogDeploy: %v", err)
+	}
+	if dep, _ := db.LastDeploy(envID); dep.FromImage != "repo@sha256:new" {
+		t.Errorf("LastDeploy after a second deploy = %+v, want the newer one", dep)
+	}
+
+	// Rolling both back walks the log; then there is nothing left.
+	if d, _ := db.LastDeploy(envID); d.ID != 0 {
+		if err := db.MarkRolledBack(d.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.MarkRolledBack(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.LastDeploy(envID); err == nil {
+		t.Error("LastDeploy still returns a row after every deploy was rolled back")
+	}
+}
+
 func mustAdvance(t *testing.T, db *DB, id int64, from, to jobs.State) {
 	t.Helper()
 	if err := db.Advance(id, from, to, string(to)); err != nil {
