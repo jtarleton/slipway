@@ -40,7 +40,7 @@ spec:
         - name: ghcr
       containers:
         - name: slipway
-          image: ghcr.io/jtarleton/slipway:latest   # set to a digest once CI records releases
+          image: ghcr.io/jtarleton/slipway@sha256:598e4baf8046385d2a14a079c631c106a295590b9b2d0574f9fdb084190c5695  # :c7be55a
           args:
             - serve
             - -addr=:8080
