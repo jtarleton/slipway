@@ -17,13 +17,14 @@ and how to drive the web UI.
 
 ## Status
 
-Phase 4: `slipway console` runs drush (or any command) in an environment's
-container, through the control plane and its audit log.
+Phase 5: `slipway serve` also runs a scheduler — a nightly copy-down into dev, a
+periodic snapshot, `drush cron`, each recorded like a hand-run operation.
 
 | Working | |
 |---|---|
 | `slipway grid` | what is running in every environment, named by release where CI recorded one |
 | `slipway console -env NAME -- CMD` | run drush (or, with `-shell`, anything) in the running container |
+| `slipway schedules` / `schedule -name X -spec "0 3 * * *" -op OP …` | recurring operations, run by `serve` |
 | `slipway release -image REF -sha SHA -ref REF` | record a built image (what CI calls after a build) |
 | `slipway releases` | list recorded releases |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
@@ -82,6 +83,7 @@ cleaned up without someone deciding to.
 ## Layout
 
     internal/jobs      state machine and deterministic Job naming
+    internal/cron      five-field cron matcher for the scheduler
     internal/store     SQLite control-plane state, with tiny forward migrations
     internal/k8s       cluster read, write, sweep (dynamic), and exec
     internal/engine    the reconcile loop
@@ -119,6 +121,14 @@ tools, and the dump never lands on a PersistentVolume.
 row on completion — action, target, actor (`cli` or `web`), and outcome —
 regardless of which front end invoked it. `slipway history` and the web UI's
 operation-history table read the same log.
+
+**The scheduler is a loop in `serve`, not a cron daemon.** Every 30s it asks
+which enabled schedules match the current minute and have not already fired this
+minute, and runs one — through the same single-flight guard as everything else,
+as actor `cron`. A missed window (the process was down) is not caught up; the
+schedules that matter here are "refresh dev nightly", not "must run exactly
+once". The cron matcher (`internal/cron`) is a ~120-line five-field parser, not
+a dependency.
 
 **`console` execs into the running pod, not a Job.** The other operations run as
 Kubernetes Jobs because they must outlive the control plane. An ad-hoc

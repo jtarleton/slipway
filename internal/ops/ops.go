@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jtarleton/slipway/internal/cron"
 	"github.com/jtarleton/slipway/internal/drupal"
 	"github.com/jtarleton/slipway/internal/engine"
 	"github.com/jtarleton/slipway/internal/grid"
@@ -249,6 +250,102 @@ func (r *Runner) Adopt(ctx context.Context, name string) (err error) {
 		r.say("%s: cleared ArgoCD tracking from %d resource(s); slipway now owns %s", name, n, env.Namespace)
 	}
 	return nil
+}
+
+// Schedules lists the recurring operations.
+func (r *Runner) Schedules() ([]store.Schedule, error) { return r.DB.Schedules() }
+
+// AddSchedule validates and stores a recurring operation.
+func (r *Runner) AddSchedule(s store.Schedule) (err error) {
+	defer r.audit("schedule-add", s.Name, map[string]any{"op": s.Op, "spec": s.Spec}, &err)
+	if err := r.validateSchedule(s); err != nil {
+		return err
+	}
+	_, err = r.DB.UpsertSchedule(s)
+	return err
+}
+
+// SetScheduleEnabled turns a schedule on or off.
+func (r *Runner) SetScheduleEnabled(name string, enabled bool) (err error) {
+	defer r.audit("schedule-toggle", name, map[string]any{"enabled": enabled}, &err)
+	return r.DB.SetScheduleEnabled(name, enabled)
+}
+
+// DeleteSchedule removes a schedule.
+func (r *Runner) DeleteSchedule(name string) (err error) {
+	defer r.audit("schedule-remove", name, nil, &err)
+	return r.DB.DeleteSchedule(name)
+}
+
+// RunSchedule performs a schedule's operation now. The individual operation
+// audits itself; RunSchedule is the dispatch, so a schedule with an unknown op
+// fails here rather than silently doing nothing.
+func (r *Runner) RunSchedule(ctx context.Context, s store.Schedule) error {
+	switch s.Op {
+	case "snapshot":
+		return r.Snapshot(ctx, s.Env)
+	case "copy-down":
+		return r.CopyDown(ctx, s.From, s.To, s.SkipFiles, s.SkipDB, false)
+	case "console":
+		return r.Console(ctx, s.Env, s.Cmd, s.Shell)
+	default:
+		return fmt.Errorf("schedule %q: unknown operation %q", s.Name, s.Op)
+	}
+}
+
+// RunScheduleByName runs a stored schedule immediately, regardless of its cron
+// spec — the "run now" button.
+func (r *Runner) RunScheduleByName(ctx context.Context, name string) error {
+	s, err := r.DB.ScheduleByName(name)
+	if err != nil {
+		return fmt.Errorf("no schedule named %q: %w", name, err)
+	}
+	return r.RunSchedule(ctx, s)
+}
+
+func (r *Runner) validateSchedule(s store.Schedule) error {
+	if !cron.Valid(s.Spec) {
+		return fmt.Errorf("invalid cron spec %q (want five fields: min hour dom month dow)", s.Spec)
+	}
+	switch s.Op {
+	case "snapshot":
+		if _, err := r.env(s.Env); err != nil {
+			return err
+		}
+	case "console":
+		if s.Cmd == "" {
+			return fmt.Errorf("a console schedule needs a command")
+		}
+		if _, err := r.env(s.Env); err != nil {
+			return err
+		}
+	case "copy-down":
+		if s.SkipFiles && s.SkipDB {
+			return fmt.Errorf("a copy-down schedule that skips both files and database copies nothing")
+		}
+		if _, err := r.env(s.From); err != nil {
+			return err
+		}
+		dst, err := r.env(s.To)
+		if err != nil {
+			return err
+		}
+		if dst.IsProduction {
+			return fmt.Errorf("a schedule may not copy into production")
+		}
+	default:
+		return fmt.Errorf("unknown schedule operation %q (want snapshot, copy-down or console)", s.Op)
+	}
+	return nil
+}
+
+// WithActor runs fn with a temporary audit actor. The caller must ensure no
+// other operation runs concurrently — the web server's single-flight does.
+func (r *Runner) WithActor(actor string, fn func() error) error {
+	prev := r.Actor
+	r.Actor = actor
+	defer func() { r.Actor = prev }()
+	return fn()
 }
 
 // Console runs a command in an environment's running Drupal container.

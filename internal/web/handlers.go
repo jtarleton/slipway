@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jtarleton/slipway/internal/store"
 )
 
 //go:embed index.html
@@ -54,6 +56,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeEvent(w, "snapshots", jsonOrEmpty(s.snapshotRows()))
 	writeEvent(w, "history", jsonOrEmpty(s.historyRows()))
 	writeEvent(w, "releases", jsonOrEmpty(s.releaseRows()))
+	writeEvent(w, "schedules", jsonOrEmpty(s.scheduleRows()))
 	writeEvent(w, "state", mustJSON(s.stateView()))
 	flusher.Flush()
 
@@ -118,6 +121,63 @@ func (s *server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.launch(w, "adopt "+env, deployDeadline, func(ctx context.Context) error {
 		return s.runner.Adopt(ctx, env)
+	})
+}
+
+func (s *server) handleScheduleUpsert(w http.ResponseWriter, r *http.Request) {
+	sc := store.Schedule{
+		Name: r.FormValue("name"), Spec: r.FormValue("spec"), Op: r.FormValue("op"),
+		Env: r.FormValue("env"), From: r.FormValue("from"), To: r.FormValue("to"),
+		SkipFiles: r.FormValue("skip_files") == "true", SkipDB: r.FormValue("skip_db") == "true",
+		Cmd: r.FormValue("cmd"), Shell: r.FormValue("shell") == "true",
+	}
+	if err := s.runner.AddSchedule(sc); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.pushSchedules()
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("saved\n"))
+}
+
+func (s *server) handleScheduleToggle(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	if name == "" {
+		http.Error(w, "toggle needs name", http.StatusBadRequest)
+		return
+	}
+	if err := s.runner.SetScheduleEnabled(name, r.FormValue("enabled") == "true"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.pushSchedules()
+	w.Write([]byte("ok\n"))
+}
+
+func (s *server) handleScheduleRemove(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	if name == "" {
+		http.Error(w, "remove needs name", http.StatusBadRequest)
+		return
+	}
+	if err := s.runner.DeleteSchedule(name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.pushSchedules()
+	w.Write([]byte("removed\n"))
+}
+
+func (s *server) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	if name == "" {
+		http.Error(w, "run needs name", http.StatusBadRequest)
+		return
+	}
+	s.launch(w, "cron: "+name+" (manual)", copyDownDeadline, func(ctx context.Context) error {
+		return s.runner.WithActor("cron", func() error {
+			return s.runner.RunScheduleByName(ctx, name)
+		})
 	})
 }
 

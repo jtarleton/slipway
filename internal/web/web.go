@@ -21,11 +21,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jtarleton/slipway/internal/cron"
 	"github.com/jtarleton/slipway/internal/drupal"
 	"github.com/jtarleton/slipway/internal/grid"
 	"github.com/jtarleton/slipway/internal/jobs"
 	"github.com/jtarleton/slipway/internal/k8s"
 	"github.com/jtarleton/slipway/internal/ops"
+	"github.com/jtarleton/slipway/internal/store"
 )
 
 // reconcileInterval is how often the background loop makes an engine pass while
@@ -36,6 +38,10 @@ const reconcileInterval = 3 * time.Second
 // connected browsers. The grid is three API calls; a homelab cluster does not
 // need it faster, and every operation forces a refresh when it ends anyway.
 const gridInterval = 15 * time.Second
+
+// cronInterval is how often schedules are evaluated. Twice a minute is enough
+// at minute granularity, with a per-minute guard against double-firing.
+const cronInterval = 30 * time.Second
 
 // Serve runs the web UI and the reconcile loop until the process is signalled.
 //
@@ -141,6 +147,10 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/resume", s.handleResume)
 	mux.HandleFunc("POST /api/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/releases", s.handleRecordRelease)
+	mux.HandleFunc("POST /api/schedules", s.handleScheduleUpsert)
+	mux.HandleFunc("POST /api/schedules/toggle", s.handleScheduleToggle)
+	mux.HandleFunc("POST /api/schedules/remove", s.handleScheduleRemove)
+	mux.HandleFunc("POST /api/schedules/run", s.handleScheduleRun)
 }
 
 // --- operation lifecycle -------------------------------------------------------
@@ -210,6 +220,8 @@ func (s *server) background(ctx context.Context) {
 	defer reconcile.Stop()
 	gridTick := time.NewTicker(gridInterval)
 	defer gridTick.Stop()
+	cronTick := time.NewTicker(cronInterval)
+	defer cronTick.Stop()
 
 	s.pushGrid(ctx)
 	s.pushJobs()
@@ -221,6 +233,9 @@ func (s *server) background(ctx context.Context) {
 
 		case <-gridTick.C:
 			s.pushGrid(ctx)
+
+		case <-cronTick.C:
+			s.runDueSchedules()
 
 		case <-reconcile.C:
 			// A foreground operation drives its own reconciliation and treats a
@@ -240,6 +255,75 @@ func (s *server) background(ctx context.Context) {
 			}
 			s.pushJobs()
 		}
+	}
+}
+
+// runDueSchedules fires at most one schedule whose cron spec matches the
+// current minute and that has not already run this minute. Missed windows (the
+// server was down) are not caught up — cron here is best-effort, not a queue.
+func (s *server) runDueSchedules() {
+	s.mu.Lock()
+	busy := s.current != ""
+	s.mu.Unlock()
+	if busy {
+		return
+	}
+
+	schedules, err := s.runner.Schedules()
+	if err != nil {
+		log.Printf("slipway: read schedules: %v", err)
+		return
+	}
+	now := time.Now()
+	for _, sc := range schedules {
+		if !sc.Enabled || !scheduleDue(sc, now) {
+			continue
+		}
+		name := sc.Name
+		def := sc
+		err := s.start("cron: "+name, cronScheduleDeadline(def.Op), func(ctx context.Context) error {
+			runErr := s.runner.WithActor("cron", func() error { return s.runner.RunSchedule(ctx, def) })
+			status := "ok"
+			if runErr != nil {
+				status = "failed: " + firstLine(runErr.Error())
+			}
+			if e := s.runner.DB.RecordScheduleRun(name, time.Now().UTC().Format(time.RFC3339), status); e != nil {
+				log.Printf("slipway: record schedule run %s: %v", name, e)
+			}
+			s.pushSchedules()
+			return runErr
+		})
+		if err == nil {
+			// Stamp last_run now so a second cron tick this minute does not
+			// re-fire while the first run is still going.
+			_ = s.runner.DB.RecordScheduleRun(name, now.UTC().Format(time.RFC3339), "running")
+			s.pushSchedules()
+		}
+		return // one at a time
+	}
+}
+
+func scheduleDue(s store.Schedule, now time.Time) bool {
+	m, err := cron.Match(s.Spec, now)
+	if err != nil || !m {
+		return false
+	}
+	if s.LastRun == "" {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, s.LastRun)
+	if err != nil {
+		return true
+	}
+	return !last.Truncate(time.Minute).Equal(now.Truncate(time.Minute))
+}
+
+func cronScheduleDeadline(op string) time.Duration {
+	switch op {
+	case "copy-down":
+		return copyDownDeadline
+	default:
+		return consoleDeadline
 	}
 }
 
@@ -287,6 +371,17 @@ func (s *server) pushJobs() {
 		return
 	}
 	s.pushSnapshot("releases", mustJSON(rels))
+
+	s.pushSchedules()
+}
+
+func (s *server) pushSchedules() {
+	rows, err := s.scheduleRows()
+	if err != nil {
+		log.Printf("slipway: read schedules: %v", err)
+		return
+	}
+	s.pushSnapshot("schedules", mustJSON(rows))
 }
 
 func (s *server) broadcastState() {
@@ -589,6 +684,64 @@ type releaseRow struct {
 	Ref    string `json:"ref"`
 	GitSHA string `json:"git_sha"`
 	Image  string `json:"image"`
+}
+
+type scheduleRow struct {
+	Name       string `json:"name"`
+	Spec       string `json:"spec"`
+	What       string `json:"what"` // human summary of the operation
+	Enabled    bool   `json:"enabled"`
+	Next       string `json:"next"` // next fire time, "" if disabled or unparseable
+	LastRun    string `json:"last_run"`
+	LastStatus string `json:"last_status"`
+}
+
+func (s *server) scheduleRows() ([]scheduleRow, error) {
+	scheds, err := s.runner.Schedules()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	rows := make([]scheduleRow, 0, len(scheds))
+	for _, sc := range scheds {
+		r := scheduleRow{
+			Name: sc.Name, Spec: sc.Spec, What: scheduleWhat(sc),
+			Enabled: sc.Enabled, LastRun: sc.LastRun, LastStatus: sc.LastStatus,
+		}
+		if sc.Enabled {
+			base := now
+			if t, err := time.Parse(time.RFC3339, sc.LastRun); err == nil {
+				base = t
+			}
+			if next, err := cron.Next(sc.Spec, base); err == nil {
+				r.Next = next.Format("2006-01-02 15:04 MST")
+			}
+		}
+		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+func scheduleWhat(s store.Schedule) string {
+	switch s.Op {
+	case "snapshot":
+		return "snapshot " + s.Env
+	case "copy-down":
+		lane := "files + database"
+		if s.SkipFiles {
+			lane = "database"
+		} else if s.SkipDB {
+			lane = "files"
+		}
+		return fmt.Sprintf("copy-down %s→%s (%s)", s.From, s.To, lane)
+	case "console":
+		if s.Shell {
+			return fmt.Sprintf("console %s: sh -c %q", s.Env, s.Cmd)
+		}
+		return fmt.Sprintf("console %s: drush %s", s.Env, s.Cmd)
+	default:
+		return s.Op
+	}
 }
 
 func (s *server) releaseRows() ([]releaseRow, error) {

@@ -233,6 +233,66 @@ func TestAdoptNeedsAnEnv(t *testing.T) {
 	}
 }
 
+func TestScheduleDue(t *testing.T) {
+	now := time.Date(2026, 9, 7, 3, 0, 30, 0, time.UTC) // Monday 03:00
+
+	// Never run, spec matches this minute → due.
+	if !scheduleDue(store.Schedule{Spec: "0 3 * * *"}, now) {
+		t.Error("a never-run schedule matching the current minute should be due")
+	}
+	// Spec does not match → not due.
+	if scheduleDue(store.Schedule{Spec: "0 4 * * *"}, now) {
+		t.Error("a schedule whose spec does not match should not be due")
+	}
+	// Already ran this minute → not due (the double-fire guard).
+	if scheduleDue(store.Schedule{Spec: "0 3 * * *", LastRun: "2026-09-07T03:00:00Z"}, now) {
+		t.Error("a schedule that already ran this minute should not re-fire")
+	}
+	// Ran an hour ago, matches again → due.
+	if !scheduleDue(store.Schedule{Spec: "0 3 * * *", LastRun: "2026-09-06T03:00:00Z"}, now) {
+		t.Error("a schedule that last ran yesterday should be due again")
+	}
+}
+
+func TestScheduleRowsComputeNextRun(t *testing.T) {
+	s := testServer(t)
+	if _, err := s.runner.DB.UpsertSchedule(store.Schedule{
+		Name: "nightly", Spec: "0 3 * * *", Op: "snapshot", Env: "prod",
+	}); err != nil {
+		t.Fatalf("UpsertSchedule: %v", err)
+	}
+	if _, err := s.runner.DB.UpsertSchedule(store.Schedule{
+		Name: "off", Spec: "0 4 * * *", Op: "snapshot", Env: "prod",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.runner.DB.SetScheduleEnabled("off", false)
+
+	rows, err := s.scheduleRows()
+	if err != nil {
+		t.Fatalf("scheduleRows: %v", err)
+	}
+	byName := map[string]scheduleRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if byName["nightly"].Next == "" || byName["nightly"].What != "snapshot prod" {
+		t.Errorf("nightly row = %+v", byName["nightly"])
+	}
+	if byName["off"].Next != "" {
+		t.Errorf("disabled schedule should have no next-run: %+v", byName["off"])
+	}
+}
+
+func TestScheduleUpsertRejectsBadSpec(t *testing.T) {
+	s := testServer(t)
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/schedules", "name=x&spec=bogus&op=snapshot&env=dev"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad cron spec: status %d, want 400", rec.Code)
+	}
+}
+
 func TestConsoleNeedsEnvAndCmd(t *testing.T) {
 	s := testServer(t)
 	for _, body := range []string{"env=dev", "cmd=status", ""} {

@@ -97,6 +97,28 @@ CREATE TABLE IF NOT EXISTS deploy_log (
 
 CREATE INDEX IF NOT EXISTS idx_deploy_log_env ON deploy_log(env_id, at DESC);
 
+-- schedules are recurring operations slipway runs itself while `serve` is up:
+-- a nightly copy-down into dev, a periodic snapshot, drush cron. One operation
+-- per row, its arguments in typed columns rather than a blob so `slipway
+-- schedules` is readable.
+CREATE TABLE IF NOT EXISTS schedules (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT    NOT NULL UNIQUE,
+    spec        TEXT    NOT NULL,              -- five-field cron
+    op          TEXT    NOT NULL,              -- snapshot | copy-down | console
+    env         TEXT    NOT NULL DEFAULT '',   -- snapshot, console
+    from_env    TEXT    NOT NULL DEFAULT '',   -- copy-down
+    to_env      TEXT    NOT NULL DEFAULT '',   -- copy-down
+    skip_files  INTEGER NOT NULL DEFAULT 0,    -- copy-down
+    skip_db     INTEGER NOT NULL DEFAULT 0,    -- copy-down
+    cmd         TEXT    NOT NULL DEFAULT '',   -- console
+    shell       INTEGER NOT NULL DEFAULT 0,    -- console
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    last_run    TEXT,                          -- NULL until it has fired once
+    last_status TEXT    NOT NULL DEFAULT '',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- The reconciler's hot path: every job not yet in a terminal state.
 CREATE INDEX IF NOT EXISTS idx_jobs_unfinished
     ON jobs(state) WHERE state NOT IN ('succeeded', 'failed', 'cancelled', 'orphaned');

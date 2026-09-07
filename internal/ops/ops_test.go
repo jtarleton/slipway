@@ -88,6 +88,61 @@ func TestRollbackNeedsARecordedDeploy(t *testing.T) {
 	}
 }
 
+func TestValidateSchedule(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1), deployment("jt-drupal", 1))
+
+	bad := []store.Schedule{
+		{Name: "a", Spec: "nope", Op: "snapshot", Env: "dev"},                     // bad cron
+		{Name: "b", Spec: "0 3 * * *", Op: "frobnicate", Env: "dev"},              // unknown op
+		{Name: "c", Spec: "0 3 * * *", Op: "snapshot", Env: "staging-typo"},       // unknown env
+		{Name: "d", Spec: "0 3 * * *", Op: "console", Env: "dev"},                 // console with no command
+		{Name: "e", Spec: "0 3 * * *", Op: "copy-down", From: "prod", To: "prod"}, // into prod
+		{Name: "f", Spec: "0 3 * * *", Op: "copy-down", From: "prod", To: "dev", SkipFiles: true, SkipDB: true},
+	}
+	for _, s := range bad {
+		if err := r.validateSchedule(s); err == nil {
+			t.Errorf("validateSchedule(%s) accepted an invalid schedule", s.Name)
+		}
+	}
+
+	ok := []store.Schedule{
+		{Name: "g", Spec: "0 3 * * *", Op: "snapshot", Env: "prod"},
+		{Name: "h", Spec: "*/15 * * * *", Op: "console", Env: "dev", Cmd: "cron"},
+		{Name: "i", Spec: "0 4 * * 0", Op: "copy-down", From: "prod", To: "dev"},
+	}
+	for _, s := range ok {
+		if err := r.validateSchedule(s); err != nil {
+			t.Errorf("validateSchedule(%s) rejected a valid schedule: %v", s.Name, err)
+		}
+	}
+}
+
+func TestRunScheduleDispatchesAndUnknownOpFails(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	if err := r.RunSchedule(context.Background(), store.Schedule{Name: "x", Op: "frob"}); err == nil {
+		t.Error("RunSchedule ran an unknown operation")
+	}
+	// A console schedule dispatches to Console, which reaches the exec layer.
+	err := r.RunSchedule(context.Background(), store.Schedule{Name: "c", Op: "console", Env: "dev", Cmd: "status"})
+	if err == nil || !strings.Contains(err.Error(), "cluster config") {
+		t.Errorf("console schedule = %v, want it to dispatch to Console", err)
+	}
+}
+
+func TestWithActorRestores(t *testing.T) {
+	r := testRunner(t)
+	r.Actor = "cli"
+	_ = r.WithActor("cron", func() error {
+		if r.Actor != "cron" {
+			t.Errorf("actor = %q inside WithActor, want cron", r.Actor)
+		}
+		return nil
+	})
+	if r.Actor != "cli" {
+		t.Errorf("actor = %q after WithActor, want it restored to cli", r.Actor)
+	}
+}
+
 func TestConsoleCommand(t *testing.T) {
 	if got := consoleCommand("status", false); len(got) != 2 || got[0] != "/app/vendor/bin/drush" || got[1] != "status" {
 		t.Errorf("drush command = %q", got)

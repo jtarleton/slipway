@@ -397,6 +397,43 @@ This is the "what happened to prod last week" view. It is recorded from
 detail (individual Kubernetes Jobs and their states) is separate — see the
 "Job steps" table in the web UI.
 
+### `slipway schedules` and `slipway schedule`
+
+Recurring operations that `slipway serve` runs on a cron schedule.
+
+```
+slipway schedules                                   # list them
+
+# add or update (keyed on -name):
+slipway schedule -name nightly-dev -spec "0 3 * * *" -op copy-down -from prod -to dev
+slipway schedule -name prod-snap   -spec "0 */6 * * *" -op snapshot -env prod
+slipway schedule -name drupal-cron -spec "*/15 * * * *" -op console -env prod -cmd cron
+
+# act on an existing one by -name:
+slipway schedule -name nightly-dev -disable
+slipway schedule -name nightly-dev -enable
+slipway schedule -name nightly-dev -run       # run it now, ignoring the cron spec
+slipway schedule -name nightly-dev -rm
+```
+
+| Flag        | Meaning                                                        |
+|-------------|-------------------------------------------------------------|
+| `-name`     | schedule name (required); re-using one edits it in place      |
+| `-spec`     | five-field cron: `minute hour day-of-month month day-of-week` |
+| `-op`       | `snapshot`, `copy-down`, or `console`                         |
+| `-env`      | environment, for `snapshot` and `console`                     |
+| `-from` / `-to` | for `copy-down` (`-to` may not be production)             |
+| `-skip-files` / `-skip-db` | for `copy-down`, one lane only                 |
+| `-cmd` / `-shell` | for `console` (see `slipway console`)                    |
+| `-rm` / `-enable` / `-disable` / `-run` | act on an existing schedule    |
+
+The scheduler only runs while `slipway serve` is up. It fires a schedule when
+the current minute matches its spec and it has not already run that minute; a
+window missed because `serve` was down is **not** caught up. Runs go through the
+same one-at-a-time guard as manual operations and are recorded in
+`slipway history` as actor `cron`, plus a `last run` / `last status` on the
+schedule itself.
+
 ### `slipway serve -addr ADDR`
 
 Run the web UI and a background reconcile loop.
@@ -410,10 +447,10 @@ slipway serve -addr :8080
 | `-addr ADDR`      | `:8080`                       | address to listen on                                     |
 | `-release-token`  | env `SLIPWAY_RELEASE_TOKEN`   | bearer token that enables `POST /api/releases` for CI; unset disables it |
 
-Runs until it receives `SIGINT` or `SIGTERM`. While it runs, a loop reconciles
-any in-flight jobs every few seconds — so a sequence started from the CLI, or
-left behind by a crash, finishes without anyone keeping a terminal open. See the
-next section.
+Runs until it receives `SIGINT` or `SIGTERM`. While it runs it reconciles any
+in-flight jobs every few seconds — so a sequence started from the CLI, or left
+behind by a crash, finishes without anyone keeping a terminal open — and
+evaluates schedules (see `slipway schedule`). See the next section.
 
 ---
 
@@ -500,6 +537,8 @@ The **Manual operations** disclosure holds what the drag gestures don't cover:
 - **Detach ArgoCD** — run `slipway adopt` for an environment.
 - **Copy down (all options)** — choose source and target freely and combine
   `database only` / `files only` / `clean target tree`.
+- **Add / update a schedule** — a recurring operation; the **Schedules** panel
+  below lists them with enable/disable, run-now, and remove.
 
 ### Live log, stalled sequences, recent jobs
 
@@ -541,7 +580,7 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | Method | Path              | Body (form-encoded)                                       |
 |--------|-------------------|----------------------------------------------------------|
 | GET    | `/`               | the HTML page                                             |
-| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `snapshots`, `releases`, `history`, `state`, `log` |
+| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `snapshots`, `releases`, `schedules`, `history`, `state`, `log` |
 | GET    | `/api/grid`       | current grid as JSON                                      |
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |
@@ -556,6 +595,10 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | POST   | `/api/copy-down`  | `from`, `to`, `skip_files`, `skip_db`, `clean`            |
 | POST   | `/api/resume`     | —                                                        |
 | POST   | `/api/cancel`     | `group`                                                   |
+| POST   | `/api/schedules`  | `name`, `spec`, `op`, `env`/`from`/`to`/`cmd`/… — `201` on save |
+| POST   | `/api/schedules/toggle` | `name`, `enabled`                                  |
+| POST   | `/api/schedules/remove` | `name`                                             |
+| POST   | `/api/schedules/run`    | `name` — run it now                                 |
 
 `pin`, `deploy`, `copy-down` and `resume` answer `202 Accepted` when the
 operation starts and `409 Conflict` when another is already running; progress

@@ -42,7 +42,10 @@ const usage = `slipway — deployment control plane for Drupal on k3s
   slipway resume                   re-attach to work left in flight
   slipway cancel -group NAME        release a stalled sequence, cancelling its unfinished steps
   slipway history                  show the operation log — what ran, against what, how it turned out
-  slipway serve -addr :8080        run the web UI and the reconcile loop
+  slipway schedules                list recurring operations
+  slipway schedule -name X -spec "0 3 * * *" -op copy-down -from prod -to dev   add or update one
+        -rm | -enable | -disable | -run   act on an existing schedule by -name
+  slipway serve -addr :8080        run the web UI, the reconcile loop, and the scheduler
 
 Flags:
   -db          control-plane database (default slipway.db)
@@ -77,7 +80,15 @@ func run(args []string) error {
 		skipConfig = fs.Bool("skip-config-import", false, "omit config:import from the update sequence")
 		noSnapshot = fs.Bool("no-snapshot", false, "deploy without taking a pre-deploy database snapshot")
 		withData   = fs.Bool("with-data", false, "rollback: also restore the deploy's pre-deploy snapshot")
-		shell      = fs.Bool("shell", false, "console: run the command through sh -c instead of drush")
+		shell      = fs.Bool("shell", false, "console/schedule: run the command through sh -c instead of drush")
+		schedName  = fs.String("name", "", "schedule name")
+		schedSpec  = fs.String("spec", "", "schedule: five-field cron")
+		schedOp    = fs.String("op", "", "schedule: snapshot | copy-down | console")
+		schedCmd   = fs.String("cmd", "", "schedule: command for a console schedule")
+		schedRm    = fs.Bool("rm", false, "schedule: delete the named schedule")
+		schedOn    = fs.Bool("enable", false, "schedule: enable the named schedule")
+		schedOff   = fs.Bool("disable", false, "schedule: disable the named schedule")
+		schedRun   = fs.Bool("run", false, "schedule: run the named schedule now")
 		from       = fs.String("from", "", "source environment for copy-down")
 		to         = fs.String("to", "", "target environment for copy-down")
 		skipFiles  = fs.Bool("skip-files", false, "copy the database only, leaving files alone")
@@ -140,7 +151,7 @@ func run(args []string) error {
 	switch command {
 	case "pin", "adopt", "console":
 		deadline = 15 * time.Minute
-	case "deploy", "snapshot", "restore", "rollback", "copy-down", "resume":
+	case "deploy", "snapshot", "restore", "rollback", "copy-down", "resume", "schedule":
 		deadline = 6 * time.Hour
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
@@ -151,6 +162,15 @@ func run(args []string) error {
 		return printGrid(ctx, runner)
 	case "history":
 		return printHistory(db)
+	case "schedules":
+		return printSchedules(runner)
+	case "schedule":
+		return manageSchedule(ctx, runner, scheduleFlags{
+			name: *schedName, spec: *schedSpec, op: *schedOp, env: *env,
+			from: *from, to: *to, skipFiles: *skipFiles, skipDB: *skipDB,
+			cmd: *schedCmd, shell: *shell,
+			rm: *schedRm, enable: *schedOn, disable: *schedOff, run: *schedRun,
+		})
 	case "release":
 		return runner.RecordRelease(*image, *gitSHA, *gitRef, *builtAt)
 	case "releases":
@@ -190,10 +210,71 @@ func run(args []string) error {
 // control-plane reads and writes that run without a kubeconfig.
 func needsCluster(command string) bool {
 	switch command {
-	case "release", "releases", "history", "snapshots":
+	case "release", "releases", "history", "snapshots", "schedules":
 		return false
 	default:
 		return true
+	}
+}
+
+type scheduleFlags struct {
+	name, spec, op, env, from, to, cmd string
+	skipFiles, skipDB, shell           bool
+	rm, enable, disable, run           bool
+}
+
+func manageSchedule(ctx context.Context, runner *ops.Runner, f scheduleFlags) error {
+	if f.name == "" {
+		return fmt.Errorf("schedule needs -name")
+	}
+	switch {
+	case f.rm:
+		return runner.DeleteSchedule(f.name)
+	case f.enable:
+		return runner.SetScheduleEnabled(f.name, true)
+	case f.disable:
+		return runner.SetScheduleEnabled(f.name, false)
+	case f.run:
+		return runner.RunScheduleByName(ctx, f.name)
+	default:
+		return runner.AddSchedule(store.Schedule{
+			Name: f.name, Spec: f.spec, Op: f.op, Env: f.env, From: f.from, To: f.to,
+			SkipFiles: f.skipFiles, SkipDB: f.skipDB, Cmd: f.cmd, Shell: f.shell,
+		})
+	}
+}
+
+func printSchedules(runner *ops.Runner) error {
+	scheds, err := runner.Schedules()
+	if err != nil {
+		return err
+	}
+	if len(scheds) == 0 {
+		fmt.Println("no schedules")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSPEC\tOP\tENABLED\tLAST RUN\tLAST STATUS")
+	for _, s := range scheds {
+		last := s.LastRun
+		if last == "" {
+			last = "—"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%s\t%s\n", s.Name, s.Spec, scheduleSummary(s), s.Enabled, last, s.LastStatus)
+	}
+	return w.Flush()
+}
+
+func scheduleSummary(s store.Schedule) string {
+	switch s.Op {
+	case "snapshot":
+		return "snapshot " + s.Env
+	case "copy-down":
+		return fmt.Sprintf("copy-down %s→%s", s.From, s.To)
+	case "console":
+		return fmt.Sprintf("console %s: %s", s.Env, s.Cmd)
+	default:
+		return s.Op
 	}
 }
 

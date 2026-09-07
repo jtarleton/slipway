@@ -249,6 +249,35 @@
           </div>
           <button class="btn" type="submit" style="margin-top:12px">Copy down</button>
         </form>
+        <form class="f" id="f-schedule">
+          <h4>Add / update a schedule</h4>
+          <p class="empty" style="margin:0 0 4px">Fill the fields for the chosen operation; the others are ignored.</p>
+          <label>Name</label>
+          <input type="text" name="name" placeholder="nightly-dev-refresh" autocomplete="off">
+          <label>Cron (min hour dom month dow)</label>
+          <input type="text" name="spec" placeholder="0 3 * * *" autocomplete="off">
+          <label>Operation</label>
+          <select name="op">
+            <option value="copy-down">copy-down</option>
+            <option value="snapshot">snapshot</option>
+            <option value="console">console</option>
+          </select>
+          <label>Environment (snapshot / console)</label>
+          <select name="env" data-envs></select>
+          <label>From → To (copy-down)</label>
+          <div style="display:flex;gap:8px">
+            <select name="from" data-envs></select>
+            <select name="to" data-envs data-nonprod></select>
+          </div>
+          <label>Command (console)</label>
+          <input type="text" name="cmd" placeholder="cron" autocomplete="off">
+          <div class="checks">
+            <label><input type="checkbox" name="skip_files" value="true"> db only</label>
+            <label><input type="checkbox" name="skip_db" value="true"> files only</label>
+            <label><input type="checkbox" name="shell" value="true"> raw shell</label>
+          </div>
+          <button class="btn ghost" type="submit" style="margin-top:12px">Save schedule</button>
+        </form>
       </div>
     </details>
   </section>
@@ -261,6 +290,11 @@
   <section id="stalled-sec" hidden>
     <h2>Stalled sequences</h2>
     <div id="stalled"></div>
+  </section>
+
+  <section id="schedules-sec" hidden>
+    <h2>Schedules</h2>
+    <div class="tablewrap"><div id="schedules"></div></div>
   </section>
 
   <section id="releases-sec" hidden>
@@ -621,6 +655,36 @@
     });
   });
 
+  function renderSchedules(rows) {
+    rows = rows || [];
+    $("schedules-sec").hidden = rows.length === 0;
+    if (!rows.length) return;
+    $("schedules").innerHTML = `<table><thead><tr>
+        <th>Name</th><th>Does</th><th>Cron</th><th>Next</th><th>Last run</th><th>Status</th><th></th>
+      </tr></thead><tbody>` + rows.map(s => `
+        <tr style="${s.enabled ? '' : 'opacity:.5'}">
+          <td>${esc(s.name)}</td>
+          <td>${esc(s.what)}</td>
+          <td class="mono">${esc(s.spec)}</td>
+          <td class="mono">${esc(s.enabled ? s.next : '—')}</td>
+          <td class="mono">${esc(s.last_run || '—')}</td>
+          <td class="${/^failed/.test(s.last_status) ? 'st failed' : 'st'}">${esc(s.last_status || '—')}</td>
+          <td style="white-space:nowrap">
+            <button class="act" data-sched-run="${esc(s.name)}">run now</button>
+            <button class="act" data-sched-toggle="${esc(s.name)}" data-to="${!s.enabled}">${s.enabled ? 'disable' : 'enable'}</button>
+            <button class="act" data-sched-rm="${esc(s.name)}">remove</button>
+          </td>
+        </tr>`).join("") + `</tbody></table>`;
+  }
+  $("schedules").addEventListener("click", async (e) => {
+    const run = e.target.getAttribute("data-sched-run");
+    const tog = e.target.getAttribute("data-sched-toggle");
+    const rm = e.target.getAttribute("data-sched-rm");
+    if (run) { if (!running) await post("/api/schedules/run", { name: run }); }
+    else if (tog) await post("/api/schedules/toggle", { name: tog, enabled: e.target.getAttribute("data-to") });
+    else if (rm) await post("/api/schedules/remove", { name: rm });
+  });
+
   function renderHistory(rows) {
     rows = rows || [];
     $("history-sec").hidden = rows.length === 0;
@@ -683,6 +747,7 @@
   wireForm("f-console", "/api/console");
   wireForm("f-adopt", "/api/adopt");
   wireForm("f-copydown", "/api/copy-down");
+  wireForm("f-schedule", "/api/schedules");
 
   // ---- event stream ----------------------------------------
   function connect() {
@@ -694,6 +759,7 @@
     es.addEventListener("stalled", (e) => renderStalls(JSON.parse(e.data)));
     es.addEventListener("snapshots", (e) => renderSnapshots(JSON.parse(e.data)));
     es.addEventListener("releases", (e) => renderReleases(JSON.parse(e.data)));
+    es.addEventListener("schedules", (e) => renderSchedules(JSON.parse(e.data)));
     es.addEventListener("history", (e) => renderHistory(JSON.parse(e.data)));
     es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
     es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));
