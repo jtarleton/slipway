@@ -1,0 +1,1064 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "data": {
+        "credentials": "W2RlZmF1bHRdCmF3c19hY2Nlc3Nfa2V5X2lkID0gQUtJQVM0WkhZQUEzWFdZWERVVVEKYXdzX3NlY3JldF9hY2Nlc3Nfa2V5ID0gbGI3N2Z6QUpPeTR4all4enFlb0xka2dpa1hpbFd6UHFXODNFU1VPcQo="
+      },
+      "kind": "Secret",
+      "metadata": {
+        "name": "aws-backup-credentials",
+        "namespace": "jt-drupal-stage"
+      },
+      "type": "Opaque"
+    },
+    {
+      "apiVersion": "v1",
+      "data": {
+        "MARIADB_DATABASE": "ZHJ1cGFs",
+        "MARIADB_PASSWORD": "ZHJ1cGFscGFzc3dvcmQ=",
+        "MARIADB_ROOT_PASSWORD": "cm9vdHBhc3N3b3Jk",
+        "MARIADB_USER": "ZHJ1cGFs"
+      },
+      "kind": "Secret",
+      "metadata": {
+        "name": "db-credentials",
+        "namespace": "jt-drupal-stage"
+      },
+      "type": "Opaque"
+    },
+    {
+      "apiVersion": "v1",
+      "data": {
+        ".dockerconfigjson": "eyJhdXRocyI6eyJnaGNyLmlvIjp7InVzZXJuYW1lIjoianRhcmxldG9uIiwicGFzc3dvcmQiOiJnaHBfRGhLNTRNQ1FWTjFUVnFwdFcxUUFwNjdldHRDQUJBMEJCSUhUIiwiYXV0aCI6ImFuUmhjbXhsZEc5dU9tZG9jRjlFYUVzMU5FMURVVlpPTVZSV2NYQjBWekZSUVhBMk4yVjBkRU5CUWtFd1FrSkpTRlE9In19fQ=="
+      },
+      "kind": "Secret",
+      "metadata": {
+        "name": "ghcr",
+        "namespace": "jt-drupal-stage"
+      },
+      "type": "kubernetes.io/dockerconfigjson"
+    },
+    {
+      "apiVersion": "v1",
+      "data": {
+        "url": "aHR0cHM6Ly9oYy1waW5nLmNvbS82NTFiNjM1NS1iMmZhLTRmZTQtYmQyOS1hNDRmYmU4MGMyOTA="
+      },
+      "kind": "Secret",
+      "metadata": {
+        "name": "healthchecks-db-backup",
+        "namespace": "jt-drupal-stage"
+      },
+      "type": "Opaque"
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "annotations": {
+          "volume.kubernetes.io/selected-node": "nj-jt-srv01"
+        },
+        "finalizers": [
+          "kubernetes.io/pvc-protection"
+        ],
+        "name": "app",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "2Gi"
+          }
+        },
+        "storageClassName": "local-path",
+        "volumeMode": "Filesystem"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "annotations": {
+          "volume.kubernetes.io/selected-node": "nj-jt-srv01"
+        },
+        "finalizers": [
+          "kubernetes.io/pvc-protection"
+        ],
+        "name": "db",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "2Gi"
+          }
+        },
+        "storageClassName": "local-path",
+        "volumeMode": "Filesystem"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "PersistentVolumeClaim",
+      "metadata": {
+        "annotations": {
+          "volume.kubernetes.io/selected-node": "nj-jt-srv01"
+        },
+        "finalizers": [
+          "kubernetes.io/pvc-protection"
+        ],
+        "name": "redis",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "accessModes": [
+          "ReadWriteOnce"
+        ],
+        "resources": {
+          "requests": {
+            "storage": "768Mi"
+          }
+        },
+        "storageClassName": "local-path",
+        "volumeMode": "Filesystem"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "adminer",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "externalTrafficPolicy": "Cluster",
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 8080,
+            "protocol": "TCP",
+            "targetPort": 8080
+          }
+        ],
+        "selector": {
+          "app": "adminer"
+        },
+        "sessionAffinity": "None",
+        "type": "NodePort"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "db",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 3306,
+            "protocol": "TCP",
+            "targetPort": 3306
+          }
+        ],
+        "selector": {
+          "app": "db"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "drupal",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 80,
+            "protocol": "TCP",
+            "targetPort": 80
+          }
+        ],
+        "selector": {
+          "app": "drupal"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "phpmyadmin",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "externalTrafficPolicy": "Cluster",
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 80,
+            "protocol": "TCP",
+            "targetPort": 80
+          }
+        ],
+        "selector": {
+          "app": "phpmyadmin"
+        },
+        "sessionAffinity": "None",
+        "type": "NodePort"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "redis",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 6379,
+            "protocol": "TCP",
+            "targetPort": 6379
+          }
+        ],
+        "selector": {
+          "app": "redis"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "varnish",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "externalTrafficPolicy": "Cluster",
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+          "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+          {
+            "port": 80,
+            "protocol": "TCP",
+            "targetPort": 80
+          }
+        ],
+        "selector": {
+          "app": "varnish"
+        },
+        "sessionAffinity": "None",
+        "type": "NodePort"
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "adminer"
+        },
+        "name": "adminer",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "adminer"
+          }
+        },
+        "strategy": {
+          "rollingUpdate": {
+            "maxSurge": "25%",
+            "maxUnavailable": "25%"
+          },
+          "type": "RollingUpdate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "adminer"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "adminer:latest",
+                "imagePullPolicy": "Always",
+                "name": "adminer",
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "protocol": "TCP"
+                  }
+                ],
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "db"
+        },
+        "name": "db",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "db"
+          }
+        },
+        "strategy": {
+          "type": "Recreate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "db"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "envFrom": [
+                  {
+                    "secretRef": {
+                      "name": "db-credentials"
+                    }
+                  }
+                ],
+                "image": "mariadb:latest",
+                "imagePullPolicy": "Always",
+                "name": "db",
+                "ports": [
+                  {
+                    "containerPort": 3306,
+                    "protocol": "TCP"
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "mariadb -uroot -p$MARIADB_ROOT_PASSWORD -e 'SELECT 1'"
+                    ]
+                  },
+                  "failureThreshold": 10,
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 10,
+                  "successThreshold": 1,
+                  "timeoutSeconds": 1
+                },
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/lib/mysql",
+                    "name": "data"
+                  }
+                ]
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "name": "data",
+                "persistentVolumeClaim": {
+                  "claimName": "db"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "drupal"
+        },
+        "name": "drupal",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "drupal"
+          }
+        },
+        "strategy": {
+          "type": "Recreate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "drupal"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "ghcr.io/jtarleton/d11app@sha256:4d367eec328ad0f5600ba25e200913a5aed1bf3dbdb936697e16edde8f2950b4",
+                "imagePullPolicy": "IfNotPresent",
+                "name": "drupal",
+                "ports": [
+                  {
+                    "containerPort": 80,
+                    "protocol": "TCP"
+                  }
+                ],
+                "readinessProbe": {
+                  "failureThreshold": 10,
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 10,
+                  "successThreshold": 1,
+                  "tcpSocket": {
+                    "port": 80
+                  },
+                  "timeoutSeconds": 1
+                },
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/app/docroot/sites/default/settings.php",
+                    "name": "app",
+                    "subPath": "docroot/sites/default/settings.php"
+                  },
+                  {
+                    "mountPath": "/app/docroot/sites/default/files",
+                    "name": "app",
+                    "subPath": "docroot/sites/default/files"
+                  },
+                  {
+                    "mountPath": "/app/private",
+                    "name": "app",
+                    "subPath": "private"
+                  }
+                ]
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "imagePullSecrets": [
+              {
+                "name": "ghcr"
+              }
+            ],
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "name": "app",
+                "persistentVolumeClaim": {
+                  "claimName": "app"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "phpmyadmin"
+        },
+        "name": "phpmyadmin",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "phpmyadmin"
+          }
+        },
+        "strategy": {
+          "rollingUpdate": {
+            "maxSurge": "25%",
+            "maxUnavailable": "25%"
+          },
+          "type": "RollingUpdate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "phpmyadmin"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "env": [
+                  {
+                    "name": "PMA_HOST",
+                    "value": "db"
+                  },
+                  {
+                    "name": "PMA_PORT",
+                    "value": "3306"
+                  },
+                  {
+                    "name": "UPLOAD_LIMIT",
+                    "value": "64M"
+                  }
+                ],
+                "image": "phpmyadmin:latest",
+                "imagePullPolicy": "Always",
+                "name": "phpmyadmin",
+                "ports": [
+                  {
+                    "containerPort": 80,
+                    "protocol": "TCP"
+                  }
+                ],
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "redis"
+        },
+        "name": "redis",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "redis"
+          }
+        },
+        "strategy": {
+          "type": "Recreate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "redis"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "command": [
+                  "redis-server",
+                  "--maxmemory",
+                  "256mb",
+                  "--maxmemory-policy",
+                  "allkeys-lru"
+                ],
+                "image": "redis:latest",
+                "imagePullPolicy": "Always",
+                "name": "redis",
+                "ports": [
+                  {
+                    "containerPort": 6379,
+                    "protocol": "TCP"
+                  }
+                ],
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/data",
+                    "name": "data"
+                  }
+                ]
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30,
+            "volumes": [
+              {
+                "name": "data",
+                "persistentVolumeClaim": {
+                  "claimName": "redis"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "labels": {
+          "app": "varnish"
+        },
+        "name": "varnish",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "progressDeadlineSeconds": 600,
+        "replicas": 1,
+        "revisionHistoryLimit": 10,
+        "selector": {
+          "matchLabels": {
+            "app": "varnish"
+          }
+        },
+        "strategy": {
+          "rollingUpdate": {
+            "maxSurge": "25%",
+            "maxUnavailable": "25%"
+          },
+          "type": "RollingUpdate"
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "varnish"
+            }
+          },
+          "spec": {
+            "containers": [
+              {
+                "env": [
+                  {
+                    "name": "VARNISH_SIZE",
+                    "value": "256m"
+                  }
+                ],
+                "image": "jt-drupal-varnish:latest",
+                "imagePullPolicy": "Never",
+                "name": "varnish",
+                "ports": [
+                  {
+                    "containerPort": 80,
+                    "protocol": "TCP"
+                  }
+                ],
+                "readinessProbe": {
+                  "failureThreshold": 3,
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "successThreshold": 1,
+                  "tcpSocket": {
+                    "port": 80
+                  },
+                  "timeoutSeconds": 1
+                },
+                "resources": {},
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File"
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "terminationGracePeriodSeconds": 30
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "CronJob",
+      "metadata": {
+        "labels": {
+          "app": "db-backup"
+        },
+        "name": "db-backup",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "concurrencyPolicy": "Forbid",
+        "failedJobsHistoryLimit": 3,
+        "jobTemplate": {
+          "metadata": {},
+          "spec": {
+            "activeDeadlineSeconds": 1800,
+            "backoffLimit": 1,
+            "template": {
+              "metadata": {
+                "labels": {
+                  "app": "db-backup",
+                  "job": "db-backup"
+                }
+              },
+              "spec": {
+                "containers": [
+                  {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "set -eu\n\n# healthchecks.io dead-man's-switch (optional: pings are skipped\n# if the secret/URL isn't present, backup still runs)\nHC=\"\"\n[ -s /hc/url ] && HC=\"$(tr -d '[:space:]' < /hc/url)\"\nping() { [ -n \"$HC\" ] && curl -fsS -m 10 --retry 3 \"$HC$1\" >/dev/null 2>&1 || true; }\n\nping /start\n\nKEY=\"s3://amazon-jtarleton-s3/s3fs-private/mariadb-dumps/jt-drupal-db_full_$(date +%Y%m%d-%H%M%S).sql.gz\"\nif [ -s /backup/dump.sql.gz ] \\\n   && [ \"$(wc -c < /backup/dump.sql.gz)\" -ge \"$MIN_BYTES\" ] \\\n   && aws s3 cp /backup/dump.sql.gz \"$KEY\" --only-show-errors; then\n  echo \"uploaded $KEY ($(wc -c < /backup/dump.sql.gz) bytes)\"\n  ping \"\"\nelse\n  echo \"backup FAILED (missing / too small / upload error)\" >&2\n  ping /fail\n  exit 1\nfi\n"
+                    ],
+                    "env": [
+                      {
+                        "name": "AWS_DEFAULT_REGION",
+                        "value": "us-east-1"
+                      },
+                      {
+                        "name": "HOME",
+                        "value": "/root"
+                      },
+                      {
+                        "name": "MIN_BYTES",
+                        "value": "1000000"
+                      }
+                    ],
+                    "image": "amazon/aws-cli:latest",
+                    "imagePullPolicy": "Always",
+                    "name": "upload",
+                    "resources": {},
+                    "terminationMessagePath": "/dev/termination-log",
+                    "terminationMessagePolicy": "File",
+                    "volumeMounts": [
+                      {
+                        "mountPath": "/backup",
+                        "name": "backup"
+                      },
+                      {
+                        "mountPath": "/root/.aws",
+                        "name": "aws-creds",
+                        "readOnly": true
+                      },
+                      {
+                        "mountPath": "/hc",
+                        "name": "healthchecks",
+                        "readOnly": true
+                      }
+                    ]
+                  }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "initContainers": [
+                  {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "set -e\nmariadb-dump -h db -uroot -p\"$MARIADB_ROOT_PASSWORD\" \\\n  --all-databases --single-transaction --routines --triggers --events \\\n  | gzip -9 > /backup/dump.sql.gz\n"
+                    ],
+                    "envFrom": [
+                      {
+                        "secretRef": {
+                          "name": "db-credentials"
+                        }
+                      }
+                    ],
+                    "image": "mariadb:latest",
+                    "imagePullPolicy": "Always",
+                    "name": "dump",
+                    "resources": {},
+                    "terminationMessagePath": "/dev/termination-log",
+                    "terminationMessagePolicy": "File",
+                    "volumeMounts": [
+                      {
+                        "mountPath": "/backup",
+                        "name": "backup"
+                      }
+                    ]
+                  }
+                ],
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                  {
+                    "emptyDir": {},
+                    "name": "backup"
+                  },
+                  {
+                    "name": "aws-creds",
+                    "secret": {
+                      "defaultMode": 420,
+                      "secretName": "aws-backup-credentials"
+                    }
+                  },
+                  {
+                    "name": "healthchecks",
+                    "secret": {
+                      "defaultMode": 420,
+                      "optional": true,
+                      "secretName": "healthchecks-db-backup"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "schedule": "30 2 * * *",
+        "successfulJobsHistoryLimit": 3,
+        "suspend": false
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "CronJob",
+      "metadata": {
+        "labels": {
+          "app": "drupal"
+        },
+        "name": "drupal-cron",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "concurrencyPolicy": "Forbid",
+        "failedJobsHistoryLimit": 3,
+        "jobTemplate": {
+          "metadata": {},
+          "spec": {
+            "activeDeadlineSeconds": 600,
+            "backoffLimit": 1,
+            "template": {
+              "metadata": {
+                "labels": {
+                  "app": "drupal",
+                  "job": "drupal-cron"
+                }
+              },
+              "spec": {
+                "containers": [
+                  {
+                    "command": [
+                      "/app/vendor/bin/drush",
+                      "cron"
+                    ],
+                    "image": "jt-drupal-drupal:latest",
+                    "imagePullPolicy": "Never",
+                    "name": "drush-cron",
+                    "resources": {},
+                    "terminationMessagePath": "/dev/termination-log",
+                    "terminationMessagePolicy": "File",
+                    "volumeMounts": [
+                      {
+                        "mountPath": "/app",
+                        "name": "app"
+                      }
+                    ]
+                  }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                  {
+                    "name": "app",
+                    "persistentVolumeClaim": {
+                      "claimName": "app"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "schedule": "0 * * * *",
+        "successfulJobsHistoryLimit": 3,
+        "suspend": false
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "CronJob",
+      "metadata": {
+        "labels": {
+          "app": "files-backup"
+        },
+        "name": "files-backup",
+        "namespace": "jt-drupal-stage"
+      },
+      "spec": {
+        "concurrencyPolicy": "Forbid",
+        "failedJobsHistoryLimit": 3,
+        "jobTemplate": {
+          "metadata": {},
+          "spec": {
+            "activeDeadlineSeconds": 1800,
+            "backoffLimit": 1,
+            "template": {
+              "metadata": {
+                "labels": {
+                  "app": "files-backup",
+                  "job": "files-backup"
+                }
+              },
+              "spec": {
+                "containers": [
+                  {
+                    "command": [
+                      "sh",
+                      "-c",
+                      "set -e\ntar czf /backup/files.tar.gz -C /data .\naws s3 cp /backup/files.tar.gz \\\n  \"s3://amazon-jtarleton-s3/s3fs-private/pvc-backups/jt-drupal-app_full_$(date +%Y%m%d-%H%M%S).tar.gz\" \\\n  --only-show-errors\n"
+                    ],
+                    "env": [
+                      {
+                        "name": "AWS_DEFAULT_REGION",
+                        "value": "us-east-1"
+                      },
+                      {
+                        "name": "HOME",
+                        "value": "/root"
+                      }
+                    ],
+                    "image": "amazon/aws-cli:latest",
+                    "imagePullPolicy": "Always",
+                    "name": "upload",
+                    "resources": {},
+                    "terminationMessagePath": "/dev/termination-log",
+                    "terminationMessagePolicy": "File",
+                    "volumeMounts": [
+                      {
+                        "mountPath": "/data",
+                        "name": "data",
+                        "readOnly": true
+                      },
+                      {
+                        "mountPath": "/backup",
+                        "name": "backup"
+                      },
+                      {
+                        "mountPath": "/root/.aws",
+                        "name": "aws-creds",
+                        "readOnly": true
+                      }
+                    ]
+                  }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                  {
+                    "name": "data",
+                    "persistentVolumeClaim": {
+                      "claimName": "app"
+                    }
+                  },
+                  {
+                    "emptyDir": {},
+                    "name": "backup"
+                  },
+                  {
+                    "name": "aws-creds",
+                    "secret": {
+                      "defaultMode": 420,
+                      "secretName": "aws-backup-credentials"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "schedule": "45 2 * * *",
+        "successfulJobsHistoryLimit": 3,
+        "suspend": false
+      }
+    }
+  ]
+}

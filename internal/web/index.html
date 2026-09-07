@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>slipway</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel-2: #1e242c; --line: #2a313b;
+    --ink: #d7dde5; --dim: #8a95a3; --accent: #5bc0eb; --ok: #4caf7d;
+    --warn: #d8a657; --bad: #e06c75; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: 0.5px; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  header .conn { margin-left: auto; font-size: 12px; color: var(--dim); }
+  header .conn.up { color: var(--ok); }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px; display: grid; gap: 22px; }
+  section > h2 {
+    margin: 0 0 10px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--dim); font-weight: 600;
+  }
+
+  /* grid */
+  .grid { display: grid; gap: 10px; }
+  .cell {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; display: grid;
+    grid-template-columns: 120px 1fr auto auto; gap: 12px; align-items: center;
+  }
+  .cell .name { font-weight: 600; }
+  .cell .name .prod { color: var(--warn); font-size: 11px; margin-left: 6px; }
+  .cell .ns { color: var(--dim); font-size: 12px; }
+  .cell .code { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .cell .code.loose { color: var(--warn); }
+  .cell .reps { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .badge.healthy { color: var(--ok); border-color: #2e5a45; }
+  .badge.degraded { color: var(--bad); border-color: #5a2e33; }
+
+  /* forms */
+  .ops { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 13px; }
+  .card label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 3px; }
+  .card select, .card input[type=text] {
+    width: 100%; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--ink); border-radius: 6px; padding: 7px 8px; font: inherit;
+  }
+  .card .checks { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--dim); }
+  .card .checks label { display: inline-flex; align-items: center; gap: 5px; margin: 0; }
+  button {
+    margin-top: 12px; background: var(--accent); color: #06222e; border: 0;
+    border-radius: 6px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* log */
+  .log {
+    background: #0a0d10; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    height: 240px; overflow-y: auto; white-space: pre-wrap;
+  }
+  .log .t { color: var(--dim); }
+  .log .fail { color: var(--bad); }
+  .running-tag { color: var(--accent); font-size: 12px; margin-left: 8px; }
+
+  /* jobs */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+  td.mono { font-family: var(--mono); }
+  .st { text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+  .st.succeeded { color: var(--ok); }
+  .st.failed, .st.orphaned, .st.cancelled { color: var(--bad); }
+  .st.running, .st.submitted { color: var(--accent); }
+  .st.pending { color: var(--warn); }
+  .empty { color: var(--dim); font-size: 12px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>slipway</h1>
+  <span class="sub">deployment control plane</span>
+  <span class="conn" id="conn">connecting…</span>
+</header>
+
+<main>
+  <section>
+    <h2>Grid</h2>
+    <div class="grid" id="grid"><div class="empty">reading cluster…</div></div>
+  </section>
+
+  <section>
+    <h2>Operations <span class="running-tag" id="running"></span></h2>
+    <div class="ops">
+      <form class="card" id="f-deploy">
+        <h3>Deploy</h3>
+        <label>Environment</label>
+        <select name="env" data-envs></select>
+        <label>Image reference</label>
+        <input type="text" name="image" placeholder="registry/drupal@sha256:…" autocomplete="off">
+        <div class="checks">
+          <label><input type="checkbox" name="skip_update" value="true"> skip update hooks</label>
+          <label><input type="checkbox" name="skip_config_import" value="true"> skip config:import</label>
+        </div>
+        <button type="submit">Deploy</button>
+      </form>
+
+      <form class="card" id="f-copydown">
+        <h3>Copy down</h3>
+        <label>From</label>
+        <select name="from" data-envs></select>
+        <label>To</label>
+        <select name="to" data-envs data-nonprod></select>
+        <div class="checks">
+          <label><input type="checkbox" name="skip_files" value="true"> database only</label>
+          <label><input type="checkbox" name="clean" value="true"> clean target tree (first seed)</label>
+        </div>
+        <button type="submit">Copy down</button>
+      </form>
+
+      <form class="card" id="f-pin">
+        <h3>Pin</h3>
+        <p class="empty">Rewrite a tag-pinned Deployment to the digest it is already running.</p>
+        <label>Environment</label>
+        <select name="env" data-envs></select>
+        <button type="submit" class="ghost">Pin</button>
+      </form>
+
+      <form class="card" id="f-resume">
+        <h3>Resume</h3>
+        <p class="empty">Re-attach to work left in flight and drive it to completion.</p>
+        <button type="submit" class="ghost">Resume</button>
+      </form>
+    </div>
+  </section>
+
+  <section>
+    <h2>Live log</h2>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section>
+    <h2>Recent jobs</h2>
+    <div id="jobs"><div class="empty">no jobs yet</div></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let envs = [];
+  let running = false;
+
+  // --- rendering ----------------------------------------------------------
+  function renderGrid(rows) {
+    envs = rows.map(r => ({ name: r.env, prod: r.prod }));
+    fillEnvSelects();
+    const el = $("grid");
+    if (!rows.length) { el.innerHTML = '<div class="empty">no environments</div>'; return; }
+    el.innerHTML = rows.map(r => `
+      <div class="cell">
+        <div>
+          <div class="name">${esc(r.env)}${r.prod ? '<span class="prod">prod</span>' : ''}</div>
+          <div class="ns">${esc(r.namespace)}</div>
+        </div>
+        <div class="code ${r.pinned ? '' : 'loose'}">${esc(r.code)}</div>
+        <div class="reps">${esc(r.replicas)}</div>
+        <div class="badge ${cls(r.state)}">${esc(r.state)}</div>
+      </div>`).join("");
+  }
+
+  function renderJobs(rows) {
+    const el = $("jobs");
+    if (!rows || !rows.length) { el.innerHTML = '<div class="empty">no jobs yet</div>'; return; }
+    el.innerHTML = `<table><thead><tr>
+        <th>Updated</th><th>Env</th><th>Group</th><th>Seq</th><th>Kind</th><th>State</th><th>Reason</th>
+      </tr></thead><tbody>` + rows.map(j => `
+        <tr>
+          <td class="mono">${esc(j.updated)}</td>
+          <td>${esc(j.env)}</td>
+          <td class="mono">${esc(j.group)}</td>
+          <td class="mono">${j.seq}</td>
+          <td>${esc(j.kind)}</td>
+          <td class="st ${esc(j.state)}">${esc(j.state)}</td>
+          <td>${esc(j.reason)}</td>
+        </tr>`).join("") + `</tbody></table>`;
+  }
+
+  function setState(st) {
+    running = !!st.running;
+    $("running").textContent = running ? "▶ " + (st.operation || "running") : "";
+    document.querySelectorAll("form button").forEach(b => b.disabled = running);
+    const log = $("log");
+    log.innerHTML = "";
+    (st.log || []).forEach(line => appendLog({ line, at: "" }));
+  }
+
+  function appendLog(m) {
+    const log = $("log");
+    const div = document.createElement("div");
+    const fail = /FAILED|error|stalled/i.test(m.line);
+    div.innerHTML = (m.at ? `<span class="t">${esc(m.at)}</span> ` : "") +
+      `<span${fail ? ' class="fail"' : ''}>${esc(m.line)}</span>`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // --- forms ------------------------------------------------------------
+  function fillEnvSelects() {
+    document.querySelectorAll("select[data-envs]").forEach(sel => {
+      const nonprod = sel.hasAttribute("data-nonprod");
+      const prev = sel.value;
+      sel.innerHTML = envs
+        .filter(e => !nonprod || !e.prod)
+        .map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join("");
+      if (prev) sel.value = prev;
+    });
+  }
+
+  function wireForm(id, path) {
+    $(id).addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const body = new URLSearchParams();
+      new FormData(ev.target).forEach((v, k) => body.append(k, v));
+      const res = await fetch(path, { method: "POST", body });
+      if (!res.ok) appendLog({ line: "! " + (await res.text()).trim(), at: now() });
+    });
+  }
+  wireForm("f-deploy", "/api/deploy");
+  wireForm("f-copydown", "/api/copy-down");
+  wireForm("f-pin", "/api/pin");
+  wireForm("f-resume", "/api/resume");
+
+  // --- event stream ---------------------------------------------------
+  function connect() {
+    const es = new EventSource("/events");
+    es.addEventListener("open", () => { $("conn").textContent = "live"; $("conn").classList.add("up"); });
+    es.addEventListener("error", () => { $("conn").textContent = "reconnecting…"; $("conn").classList.remove("up"); });
+    es.addEventListener("grid", (e) => renderGrid(JSON.parse(e.data)));
+    es.addEventListener("jobs", (e) => renderJobs(JSON.parse(e.data)));
+    es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
+    es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));
+  }
+  connect();
+
+  // --- utils --------------------------------------------------------
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+  function cls(state) { return state === "healthy" ? "healthy" : state === "degraded" ? "degraded" : ""; }
+  function now() { return new Date().toTimeString().slice(0, 8); }
+})();
+</script>
+</body>
+</html>

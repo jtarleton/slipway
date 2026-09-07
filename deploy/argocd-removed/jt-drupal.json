@@ -1,0 +1,33 @@
+{
+  "apiVersion": "argoproj.io/v1alpha1",
+  "kind": "Application",
+  "metadata": {
+    "annotations": {
+      "argocd.argoproj.io/hydrate": "normal",
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"argoproj.io/v1alpha1\",\"kind\":\"Application\",\"metadata\":{\"annotations\":{},\"name\":\"jt-drupal\",\"namespace\":\"argocd\"},\"spec\":{\"destination\":{\"namespace\":\"jt-drupal\",\"server\":\"https://kubernetes.default.svc\"},\"project\":\"default\",\"source\":{\"path\":\"apps/jt-drupal\",\"repoURL\":\"https://github.com/jtarleton/jamestarleton-k8s-manifests.git\",\"targetRevision\":\"main\"},\"syncPolicy\":{\"automated\":{\"prune\":true,\"selfHeal\":true},\"syncOptions\":[\"CreateNamespace=true\"]}}}\n"
+    },
+    "name": "jt-drupal",
+    "namespace": "argocd"
+  },
+  "spec": {
+    "destination": {
+      "namespace": "jt-drupal",
+      "server": "https://kubernetes.default.svc"
+    },
+    "project": "default",
+    "source": {
+      "path": "apps/jt-drupal",
+      "repoURL": "https://github.com/jtarleton/jamestarleton-k8s-manifests.git",
+      "targetRevision": "main"
+    },
+    "syncPolicy": {
+      "automated": {
+        "prune": true,
+        "selfHeal": true
+      },
+      "syncOptions": [
+        "CreateNamespace=true"
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/dist/
+slipway
+
+# Local state — the control plane's SQLite store
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets and local config
+.env
+*.local.yaml
+kubeconfig
+
+# macOS
+.DS_Store
