@@ -12,6 +12,9 @@ GitHub Actions builds and pushes an image, then stops. Slipway owns everything
 stateful: it patches Deployments directly and runs each long operation as a
 Kubernetes Job it creates and watches, so work survives a control-plane restart.
 
+**[docs/manual.md](docs/manual.md)** is the full user manual — every CLI command
+and how to drive the web UI.
+
 ## Status
 
 Phase 2, plus the copy-down lane brought forward because standing up `stage`
