@@ -751,6 +751,7 @@ type scheduleRow struct {
 	Name       string `json:"name"`
 	Spec       string `json:"spec"`
 	What       string `json:"what"` // human summary of the operation
+	Env        string `json:"env"`  // the environment this schedule acts on (copy-down: its target)
 	Enabled    bool   `json:"enabled"`
 	Next       string `json:"next"` // next fire time, "" if disabled or unparseable
 	LastRun    string `json:"last_run"`
@@ -766,7 +767,7 @@ func (s *server) scheduleRows() ([]scheduleRow, error) {
 	rows := make([]scheduleRow, 0, len(scheds))
 	for _, sc := range scheds {
 		r := scheduleRow{
-			Name: sc.Name, Spec: sc.Spec, What: scheduleWhat(sc),
+			Name: sc.Name, Spec: sc.Spec, What: scheduleWhat(sc), Env: scheduleEnv(sc),
 			Enabled: sc.Enabled, LastRun: sc.LastRun, LastStatus: sc.LastStatus,
 		}
 		if sc.Enabled {
@@ -781,6 +782,16 @@ func (s *server) scheduleRows() ([]scheduleRow, error) {
 		rows = append(rows, r)
 	}
 	return rows, nil
+}
+
+// scheduleEnv is the environment a schedule acts on, for grouping in the UI.
+// copy-down touches two; its target (the environment being refreshed) is the
+// one the schedule exists for.
+func scheduleEnv(s store.Schedule) string {
+	if s.Op == "copy-down" {
+		return s.To
+	}
+	return s.Env
 }
 
 func scheduleWhat(s store.Schedule) string {
