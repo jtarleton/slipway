@@ -296,6 +296,27 @@ sqlite3 slipway.db \
   "SELECT DISTINCT group_id FROM jobs WHERE state NOT IN ('succeeded','failed','cancelled','orphaned')"
 ```
 
+### `slipway history`
+
+Show the operation log — every deploy, snapshot, rollback, copy-down, restore,
+pin and cancel, whether it ran from the CLI or the web UI, and how it turned out.
+
+```
+slipway history
+```
+
+```
+WHEN                  ACTOR   ACTION      TARGET        OUTCOME
+2026-09-07 14:41:12   web     rollback    stage         ok
+2026-09-07 14:32:01   cli     deploy      stage         ok
+2026-09-07 12:05:33   web     copy-down   prod→stage    failed: sequence stalled with 1 step(s) unfinished
+```
+
+This is the "what happened to prod last week" view. It is recorded from
+`internal/ops`, so the CLI and the web UI both feed the same log. Job-level
+detail (individual Kubernetes Jobs and their states) is separate — see the
+"Job steps" table in the web UI.
+
 ### `slipway serve -addr ADDR`
 
 Run the web UI and a background reconcile loop.
@@ -408,9 +429,12 @@ Below the matrix:
   snapshot (env, when, object key) with a **restore** button
   (`slipway restore`), which opens a confirm dialog before overwriting that
   environment's database.
-- **Recent jobs** — every step of every recent operation, with its state
-  (`succeeded`, `failed`, `running`, `pending`, `cancelled`, or `stalled` for a
-  step stuck behind a failure).
+- **Operation history** — appears once anything has run. Every operation (deploy,
+  snapshot, rollback, …), who ran it (`cli` / `web`), against which environment,
+  and the outcome. The same log `slipway history` prints.
+- **Job steps** — every step of every recent operation, with its Kubernetes-Job
+  state (`succeeded`, `failed`, `running`, `pending`, `cancelled`, or `stalled`
+  for a step stuck behind a failure). Lower-level than the history table.
 
 ### One operation at a time
 
@@ -429,7 +453,7 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | Method | Path              | Body (form-encoded)                                       |
 |--------|-------------------|----------------------------------------------------------|
 | GET    | `/`               | the HTML page                                             |
-| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `state`, `log` |
+| GET    | `/events`         | Server-Sent Events: `grid`, `jobs`, `stalled`, `snapshots`, `history`, `state`, `log` |
 | GET    | `/api/grid`       | current grid as JSON                                      |
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |

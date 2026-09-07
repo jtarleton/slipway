@@ -7,9 +7,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -35,6 +37,7 @@ const usage = `slipway — deployment control plane for Drupal on k3s
         -skip-files  database only   -skip-db  files only   -clean  empty the target tree first (first seed)
   slipway resume                   re-attach to work left in flight
   slipway cancel -group NAME        release a stalled sequence, cancelling its unfinished steps
+  slipway history                  show the operation log — what ran, against what, how it turned out
   slipway serve -addr :8080        run the web UI and the reconcile loop
 
 Flags:
@@ -106,9 +109,11 @@ func run(args []string) error {
 		Container: *container,
 		Images:    drupal.DefaultImages(),
 		Report:    func(line string) { fmt.Println(line) },
+		Actor:     "cli",
 	}
 
 	if command == "serve" {
+		runner.Actor = "web"
 		return web.Serve(context.Background(), *addr, runner)
 	}
 
@@ -128,6 +133,8 @@ func run(args []string) error {
 	switch command {
 	case "grid":
 		return printGrid(ctx, runner)
+	case "history":
+		return printHistory(db)
 	case "pin":
 		return runner.Pin(ctx, *env)
 	case "deploy":
@@ -153,6 +160,42 @@ func run(args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+func printHistory(db *store.DB) error {
+	entries, err := db.History(50)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		fmt.Println("no operations recorded yet")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "WHEN\tACTOR\tACTION\tTARGET\tOUTCOME")
+	for _, e := range entries {
+		var d struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(e.Detail, &d)
+		outcome := "ok"
+		if !d.OK {
+			outcome = "failed"
+			if d.Error != "" {
+				outcome = "failed: " + firstLine(d.Error)
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", e.At, e.Actor, e.Action, e.Target, outcome)
+	}
+	return w.Flush()
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func printSnapshots(runner *ops.Runner, env string) error {

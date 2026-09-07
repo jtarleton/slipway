@@ -31,6 +31,7 @@ required it.
 | `slipway copy-down -from prod -to stage` | files, database, sanitize — in order; `-skip-files` / `-skip-db` for one lane |
 | `slipway resume` | re-attach to work left in flight |
 | `slipway cancel -group NAME` | release a stalled sequence, cancelling the steps wedged behind a failure |
+| `slipway history` | the operation log — what ran, against what, how it turned out |
 | `slipway serve` | web UI over the same operations, plus a background reconcile loop |
 
 Not built yet: the update-hook sequence's own tests against a live cluster; the
@@ -55,9 +56,10 @@ copy pulled from `prod`, `dev` has never been seeded, and `prod` is the source o
 record. Anything the drag gestures don't cover — deploying an arbitrary image,
 `-clean`, `-skip-config-import` — is under "Manual operations".
 
-Below the matrix a live log streams the running operation's output, and a
-recent-jobs table shows every step's state — both pushed over the same event
-stream that drives the grid.
+Below the matrix a live log streams the running operation's output; an operation
+history records what ran, by whom, and how it turned out; and a job-steps table
+shows every Kubernetes Job's state — all pushed over the same event stream that
+drives the grid.
 
 Every operation is the same `internal/ops` call the CLI makes; the server only
 adds a single-flight guard (one operation at a time — copy-down scales a
@@ -106,6 +108,11 @@ deploy — deploying with no way back defeats the point. The dump-and-upload run
 as one Job with two containers sharing an `emptyDir`: mariadb writes a gzipped
 dump into it, then aws-cli ships it out. Neither image carries the other's
 tools, and the dump never lands on a PersistentVolume.
+
+**Operations audit themselves.** Every `internal/ops` method records one audit
+row on completion — action, target, actor (`cli` or `web`), and outcome —
+regardless of which front end invoked it. `slipway history` and the web UI's
+operation-history table read the same log.
 
 ## Assumptions
 

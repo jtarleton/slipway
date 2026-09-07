@@ -10,6 +10,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -32,12 +33,40 @@ type Runner struct {
 	Container string // the container within it
 	Images    drupal.Images
 	Report    Reporter
+	Actor     string // recorded in the audit log; "cli" or "web"
 }
 
 func (r *Runner) say(format string, args ...any) {
 	if r.Report != nil {
 		r.Report(fmt.Sprintf(format, args...))
 	}
+}
+
+// audit records the outcome of one operation. Called deferred with a pointer to
+// the operation's named error return, so it sees whether the operation
+// succeeded. An audit-write failure is reported but never fails the operation —
+// the work happened either way.
+func (r *Runner) audit(action, target string, detail map[string]any, errp *error) {
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	if *errp != nil {
+		detail["error"] = (*errp).Error()
+		detail["ok"] = false
+	} else {
+		detail["ok"] = true
+	}
+	blob, _ := json.Marshal(detail)
+	if err := r.DB.Record(r.actor(), action, target, blob); err != nil {
+		r.say("warning: audit record failed: %v", err)
+	}
+}
+
+func (r *Runner) actor() string {
+	if r.Actor == "" {
+		return "unknown"
+	}
+	return r.Actor
 }
 
 // Grid reads what every environment is running.
@@ -53,7 +82,9 @@ func (r *Runner) Grid(ctx context.Context) ([]grid.Cell, error) {
 //
 // This changes no running code — it is the same image — but it makes the spec
 // truthful, so "what is deployed" stops depending on a tag that can move.
-func (r *Runner) Pin(ctx context.Context, name string) error {
+func (r *Runner) Pin(ctx context.Context, name string) (err error) {
+	defer r.audit("pin", name, nil, &err)
+
 	env, err := r.env(name)
 	if err != nil {
 		return err
@@ -88,7 +119,11 @@ func (r *Runner) Pin(ctx context.Context, name string) error {
 // The snapshot comes first and a failed snapshot aborts the deploy: the whole
 // point of taking it is to have something to roll back to, so deploying without
 // one defeats the exercise. Pass noSnapshot to skip it deliberately.
-func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, skipConfig, noSnapshot bool) error {
+func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, skipConfig, noSnapshot bool) (err error) {
+	defer r.audit("deploy", name, map[string]any{
+		"image": image, "no_snapshot": noSnapshot, "skip_update": skipUpdate,
+	}, &err)
+
 	if image == "" {
 		return fmt.Errorf("deploy needs an image")
 	}
@@ -140,7 +175,9 @@ func (r *Runner) Deploy(ctx context.Context, name, image string, skipUpdate, ski
 }
 
 // Snapshot dumps an environment's database to object storage and records it.
-func (r *Runner) Snapshot(ctx context.Context, name string) error {
+func (r *Runner) Snapshot(ctx context.Context, name string) (err error) {
+	defer r.audit("snapshot", name, nil, &err)
+
 	env, err := r.env(name)
 	if err != nil {
 		return err
@@ -192,7 +229,9 @@ func (r *Runner) snapshotDatabase(ctx context.Context, env store.Environment) (*
 // new build is broken, get the old one back". withData additionally restores
 // the database snapshot taken before that deploy, scaling the app down for the
 // load; use it when the deploy changed data, not just code.
-func (r *Runner) Rollback(ctx context.Context, name string, withData bool) error {
+func (r *Runner) Rollback(ctx context.Context, name string, withData bool) (err error) {
+	defer r.audit("rollback", name, map[string]any{"with_data": withData}, &err)
+
 	env, err := r.env(name)
 	if err != nil {
 		return err
@@ -251,7 +290,9 @@ func (r *Runner) Rollback(ctx context.Context, name string, withData bool) error
 // Unlike rollback this touches only the database — the running image is left
 // alone. Use it to undo a bad copy-down, recover from corruption, or return to
 // any point further back than the last deploy.
-func (r *Runner) Restore(ctx context.Context, name string, snapshotID int64) error {
+func (r *Runner) Restore(ctx context.Context, name string, snapshotID int64) (err error) {
+	defer r.audit("restore", name, map[string]any{"snapshot": snapshotID}, &err)
+
 	env, err := r.env(name)
 	if err != nil {
 		return err
@@ -377,7 +418,11 @@ func (r *Runner) runUpdate(ctx context.Context, env store.Environment, image str
 // drops the two file steps; skipDB drops the restore and the sanitize — the
 // Acquia workflow's separate "drag Database" and "drag Files" gestures land
 // here as one of those two subsets.
-func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, skipDB, clean bool) error {
+func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, skipDB, clean bool) (err error) {
+	defer r.audit("copy-down", from+"→"+to, map[string]any{
+		"skip_files": skipFiles, "skip_db": skipDB, "clean": clean,
+	}, &err)
+
 	if skipFiles && skipDB {
 		return fmt.Errorf("copy-down with nothing to copy: both files and database skipped")
 	}
@@ -473,7 +518,9 @@ func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, skipD
 // not the cluster. The failed step that stalled the group stays as it is; what
 // changes is that the steps waiting behind it stop being offered to the engine
 // and stop making `resume` report a failure.
-func (r *Runner) Cancel(ctx context.Context, group string) error {
+func (r *Runner) Cancel(ctx context.Context, group string) (err error) {
+	defer r.audit("cancel", group, nil, &err)
+
 	stalls, err := r.DB.Stalls()
 	if err != nil {
 		return err

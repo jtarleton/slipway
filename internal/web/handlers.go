@@ -49,6 +49,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeEvent(w, "jobs", jsonOrEmpty(s.jobRows()))
 	writeEvent(w, "stalled", jsonOrEmpty(s.stallRows()))
 	writeEvent(w, "snapshots", jsonOrEmpty(s.snapshotRows()))
+	writeEvent(w, "history", jsonOrEmpty(s.historyRows()))
 	writeEvent(w, "state", mustJSON(s.stateView()))
 	flusher.Flush()
 

@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -265,6 +266,13 @@ func (s *server) pushJobs() {
 		return
 	}
 	s.pushSnapshot("snapshots", mustJSON(snaps))
+
+	hist, err := s.historyRows()
+	if err != nil {
+		log.Printf("slipway: read history: %v", err)
+		return
+	}
+	s.pushSnapshot("history", mustJSON(hist))
 }
 
 func (s *server) broadcastState() {
@@ -487,6 +495,49 @@ func (s *server) snapshotRows() ([]snapshotRow, error) {
 		}
 	}
 	return rows, nil
+}
+
+type historyRow struct {
+	When    string `json:"when"`
+	Actor   string `json:"actor"`
+	Action  string `json:"action"`
+	Target  string `json:"target"`
+	OK      bool   `json:"ok"`
+	Outcome string `json:"outcome"` // "ok" or a short failure reason
+}
+
+func (s *server) historyRows() ([]historyRow, error) {
+	entries, err := s.runner.DB.History(80)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]historyRow, 0, len(entries))
+	for _, e := range entries {
+		var d struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(e.Detail, &d)
+		outcome := "ok"
+		if !d.OK {
+			outcome = "failed"
+			if d.Error != "" {
+				outcome = firstLine(d.Error)
+			}
+		}
+		rows = append(rows, historyRow{
+			When: e.At, Actor: e.Actor, Action: e.Action, Target: e.Target,
+			OK: d.OK, Outcome: outcome,
+		})
+	}
+	return rows, nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 type stateView struct {

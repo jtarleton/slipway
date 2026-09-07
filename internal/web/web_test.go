@@ -224,6 +224,44 @@ func TestRestoreNeedsEnvAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestHistoryIsStreamedWithOutcomes(t *testing.T) {
+	s := testServer(t)
+	if err := s.runner.DB.Record("web", "deploy", "stage", []byte(`{"ok":false,"error":"rollout stalled\nmore"}`)); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := s.runner.DB.Record("cli", "snapshot", "prod", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	rows, err := s.historyRows()
+	if err != nil {
+		t.Fatalf("historyRows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	// Newest first; the failure keeps only its first line.
+	if rows[0].Action != "snapshot" || !rows[0].OK || rows[0].Outcome != "ok" {
+		t.Errorf("row 0 = %+v", rows[0])
+	}
+	if rows[1].OK || rows[1].Outcome != "rollout stalled" {
+		t.Errorf("row 1 = %+v, want a one-line failure reason", rows[1])
+	}
+
+	srv := httptest.NewServer(mux(s))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events", nil)
+	resp, _ := http.DefaultClient.Do(req)
+	buf := make([]byte, 8192)
+	n, _ := resp.Body.Read(buf)
+	resp.Body.Close()
+	if !strings.Contains(string(buf[:n]), "event: history") {
+		t.Errorf("opening burst missing the history event:\n%s", buf[:n])
+	}
+}
+
 func TestRollbackWithNothingToUndoReportsIt(t *testing.T) {
 	s := testServer(t)
 	rec := httptest.NewRecorder()

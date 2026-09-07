@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,40 @@ func TestRollbackNeedsARecordedDeploy(t *testing.T) {
 	r := testRunner(t, deployment("jt-drupal-dev", 1))
 	if err := r.Rollback(context.Background(), "dev", false); err == nil {
 		t.Fatal("Rollback with no deploy log succeeded")
+	}
+}
+
+// Every operation leaves an audit entry, whether it succeeded or failed.
+func TestOperationsAreAudited(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	r.Actor = "cli"
+
+	// A rollback that fails (nothing to roll back) still records.
+	_ = r.Rollback(context.Background(), "dev", false)
+	// A restore that fails validation still records.
+	_ = r.Restore(context.Background(), "dev", 404)
+
+	hist, err := r.DB.History(10)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(hist) != 2 {
+		t.Fatalf("got %d audit entries, want 2: %+v", len(hist), hist)
+	}
+	for _, e := range hist {
+		if e.Actor != "cli" {
+			t.Errorf("entry %s recorded actor %q", e.Action, e.Actor)
+		}
+		var d struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(e.Detail, &d); err != nil {
+			t.Fatalf("detail is not json: %v", err)
+		}
+		if d.OK || d.Error == "" {
+			t.Errorf("failed op %s recorded as ok=%v error=%q", e.Action, d.OK, d.Error)
+		}
 	}
 }
 

@@ -249,8 +249,13 @@
     <div class="tablewrap"><div id="snapshots"></div></div>
   </section>
 
+  <section id="history-sec" hidden>
+    <h2>Operation history</h2>
+    <div class="tablewrap"><div id="history"></div></div>
+  </section>
+
   <section>
-    <h2>Recent jobs</h2>
+    <h2>Job steps</h2>
     <div class="tablewrap"><div id="jobs"><div class="empty">no jobs yet</div></div></div>
   </section>
 </main>
@@ -558,6 +563,22 @@
     });
   });
 
+  function renderHistory(rows) {
+    rows = rows || [];
+    $("history-sec").hidden = rows.length === 0;
+    if (!rows.length) return;
+    $("history").innerHTML = `<table><thead><tr>
+        <th>When</th><th>By</th><th>Action</th><th>Target</th><th>Outcome</th>
+      </tr></thead><tbody>` + rows.map(h => `
+        <tr>
+          <td class="mono">${esc(h.when)}</td>
+          <td>${esc(h.actor)}</td>
+          <td>${esc(h.action)}</td>
+          <td class="mono">${esc(h.target)}</td>
+          <td class="st ${h.ok ? 'succeeded' : 'failed'}">${esc(h.outcome)}</td>
+        </tr>`).join("") + `</tbody></table>`;
+  }
+
   // ---- state / log --------------------------------------------
   function setState(st) {
     running = !!st.running;
@@ -612,6 +633,7 @@
     es.addEventListener("jobs", (e) => renderJobs(JSON.parse(e.data)));
     es.addEventListener("stalled", (e) => renderStalls(JSON.parse(e.data)));
     es.addEventListener("snapshots", (e) => renderSnapshots(JSON.parse(e.data)));
+    es.addEventListener("history", (e) => renderHistory(JSON.parse(e.data)));
     es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
     es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));
   }

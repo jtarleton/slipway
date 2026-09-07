@@ -432,6 +432,38 @@ func TestDeployLogAndRollbackTarget(t *testing.T) {
 	}
 }
 
+func TestAuditRecordsAndReadsBackNewestFirst(t *testing.T) {
+	db := open(t)
+
+	if err := db.Record("cli", "snapshot", "prod", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := db.Record("web", "deploy", "stage", []byte(`{"ok":false,"error":"boom"}`)); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := db.Record("cli", "", "x", nil); err == nil {
+		t.Error("Record accepted an entry with no action")
+	}
+
+	got, err := db.History(10)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(got) != 2 || got[0].Action != "deploy" || got[1].Action != "snapshot" {
+		t.Fatalf("History = %+v, want deploy then snapshot", got)
+	}
+	if got[0].Actor != "web" || string(got[0].Detail) != `{"ok":false,"error":"boom"}` {
+		t.Errorf("first entry = %+v", got[0])
+	}
+	// An empty detail comes back as an object, not null.
+	if err := db.Record("cli", "pin", "dev", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := db.History(1); string(got[0].Detail) != "{}" {
+		t.Errorf("empty detail = %q, want {}", got[0].Detail)
+	}
+}
+
 func mustAdvance(t *testing.T, db *DB, id int64, from, to jobs.State) {
 	t.Helper()
 	if err := db.Advance(id, from, to, string(to)); err != nil {
