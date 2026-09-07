@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-// Kind identifies what a job does. Slipway has a fixed, small set of
-// operations by design — three drag gestures plus rollback, cron, and console.
-// Adding a Kind should be a deliberate act, not an extension point.
+// Kind identifies what a job does. Slipway has a fixed, small set of operations
+// by design. Ad-hoc commands (`slipway console`) exec into the running pod
+// rather than running as a Job, so they need no Kind. Adding a Kind should be a
+// deliberate act, not an extension point.
 type Kind string
 
 const (

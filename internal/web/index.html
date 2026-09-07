@@ -217,6 +217,18 @@
           </div>
           <button class="btn" type="submit" style="margin-top:12px">Deploy</button>
         </form>
+        <form class="f" id="f-console">
+          <h4>Console</h4>
+          <p class="empty" style="margin:0 0 4px">Run a command in the running container. Output goes to the live log.</p>
+          <label>Environment</label>
+          <select name="env" data-envs></select>
+          <label>Command</label>
+          <input type="text" name="cmd" placeholder="status" autocomplete="off">
+          <div class="checks">
+            <label><input type="checkbox" name="shell" value="true"> raw shell (not drush)</label>
+          </div>
+          <button class="btn ghost" type="submit" style="margin-top:12px">Run</button>
+        </form>
         <form class="f" id="f-adopt">
           <h4>Detach ArgoCD</h4>
           <p class="empty" style="margin:0 0 4px">Strip leftover ArgoCD tracking so slipway owns the namespace. Safe to re-run.</p>
@@ -668,6 +680,7 @@
     });
   }
   wireForm("f-deploy", "/api/deploy");
+  wireForm("f-console", "/api/console");
   wireForm("f-adopt", "/api/adopt");
   wireForm("f-copydown", "/api/copy-down");
 

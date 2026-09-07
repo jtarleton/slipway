@@ -132,6 +132,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("POST /api/pin", s.handlePin)
 	mux.HandleFunc("POST /api/adopt", s.handleAdopt)
+	mux.HandleFunc("POST /api/console", s.handleConsole)
 	mux.HandleFunc("POST /api/deploy", s.handleDeploy)
 	mux.HandleFunc("POST /api/snapshot", s.handleSnapshot)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)

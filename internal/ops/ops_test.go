@@ -88,6 +88,56 @@ func TestRollbackNeedsARecordedDeploy(t *testing.T) {
 	}
 }
 
+func TestConsoleCommand(t *testing.T) {
+	if got := consoleCommand("status", false); len(got) != 2 || got[0] != "/app/vendor/bin/drush" || got[1] != "status" {
+		t.Errorf("drush command = %q", got)
+	}
+	if got := consoleCommand("cache:rebuild -y", false); len(got) != 3 || got[2] != "-y" {
+		t.Errorf("drush command with args = %q", got)
+	}
+	if got := consoleCommand("ls -la /app | head", true); len(got) != 3 || got[0] != "sh" || got[1] != "-c" || got[2] != "ls -la /app | head" {
+		t.Errorf("shell command = %q", got)
+	}
+}
+
+func TestLineWriter(t *testing.T) {
+	var lines []string
+	w := &lineWriter{emit: func(s string) { lines = append(lines, s) }}
+	w.Write([]byte("one\ntw"))
+	w.Write([]byte("o\r\nthree"))
+	w.flush()
+	want := []string{"one", "two", "three"}
+	if len(lines) != 3 || lines[0] != want[0] || lines[1] != want[1] || lines[2] != want[2] {
+		t.Errorf("lines = %q, want %q", lines, want)
+	}
+}
+
+func TestConsoleValidatesAndIsAudited(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+
+	if err := r.Console(context.Background(), "dev", "   ", false); err == nil {
+		t.Error("Console accepted an empty command")
+	}
+	if err := r.Console(context.Background(), "nope", "status", false); err == nil {
+		t.Error("Console accepted an unknown environment")
+	}
+	// A valid call reaches the exec layer, which has no cluster config in tests.
+	err := r.Console(context.Background(), "dev", "status", false)
+	if err == nil || !strings.Contains(err.Error(), "cluster config") {
+		t.Fatalf("Console with a real command = %v, want it to reach exec", err)
+	}
+
+	hist, _ := r.DB.History(10)
+	if len(hist) != 3 {
+		t.Fatalf("got %d audit rows, want one per Console call", len(hist))
+	}
+	for _, h := range hist {
+		if h.Action != "console" {
+			t.Errorf("audit action = %q", h.Action)
+		}
+	}
+}
+
 func TestAdoptRejectsAnUnknownEnvAndIsAudited(t *testing.T) {
 	r := testRunner(t, deployment("jt-drupal-dev", 1))
 	if err := r.Adopt(context.Background(), "staging-typo"); err == nil {

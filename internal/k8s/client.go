@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -21,6 +22,7 @@ import (
 type Client struct {
 	cs  kubernetes.Interface
 	dyn dynamic.Interface // for sweeping arbitrary kinds, e.g. detaching ArgoCD
+	cfg *rest.Config      // for streaming exec into a pod; nil in tests
 }
 
 // New builds a Client from a kubeconfig path. An empty path uses the standard
@@ -45,7 +47,7 @@ func New(kubeconfig string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build dynamic client: %w", err)
 	}
-	return &Client{cs: cs, dyn: dyn}, nil
+	return &Client{cs: cs, dyn: dyn, cfg: cfg}, nil
 }
 
 // NewWithInterface wraps existing clients. Tests use this with the fakes;

@@ -27,6 +27,7 @@ const (
 	SecretDB        = "db-credentials"
 	SecretAWS       = "aws-backup-credentials"
 	ServiceDatabase = "db"
+	DrushBin        = "/app/vendor/bin/drush"
 )
 
 // Images pins the containers operations run in.

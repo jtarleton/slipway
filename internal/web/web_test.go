@@ -233,6 +233,17 @@ func TestAdoptNeedsAnEnv(t *testing.T) {
 	}
 }
 
+func TestConsoleNeedsEnvAndCmd(t *testing.T) {
+	s := testServer(t)
+	for _, body := range []string{"env=dev", "cmd=status", ""} {
+		rec := httptest.NewRecorder()
+		mux(s).ServeHTTP(rec, formPost("/api/console", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("console %q: status %d, want 400", body, rec.Code)
+		}
+	}
+}
+
 func TestGridNamesTheRunningRelease(t *testing.T) {
 	s := testServer(t)
 	digest := "sha256:" + strings.Repeat("a", 64) // matches prod's image in testServer

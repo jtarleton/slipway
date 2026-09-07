@@ -139,6 +139,32 @@ Idempotent — a namespace that was never under ArgoCD reports "nothing to do".
 Stale annotations on old ReplicaSets are left alone; they are churn to patch and
 age out on their own as new deploys create fresh ones.
 
+### `slipway console -env NAME -- COMMAND`
+
+Run a command in an environment's running Drupal container.
+
+```
+slipway console -env prod -- status              # drush status
+slipway console -env stage -- cache:rebuild
+slipway console -env dev -shell -- 'ls -la /app/docroot'
+```
+
+| Flag       | Meaning                                                         |
+|------------|--------------------------------------------------------------|
+| `-shell`   | run the command through `sh -c` instead of prepending `drush`  |
+
+Everything after `--` is the command. By default it is a drush invocation, so
+`-- status` runs `drush status`. `-shell` runs it as a shell command instead,
+which is also how to use pipes or quoting.
+
+Output streams back as it is produced. A non-zero exit code from the command is
+reported as an error. The exec lands in a Running pod of the Deployment — the
+same one serving traffic — so treat destructive commands (`sql:drop`,
+`sql:query`) with the same care you would at a `kubectl exec` prompt.
+
+Unlike the other operations this does not run as a Kubernetes Job; it is a live
+`kubectl exec`-style stream. It is still recorded in `slipway history`.
+
 ### `slipway deploy -env NAME (-image REF | -release REF)`
 
 Snapshot the database, deploy, wait for the rollout, then run the post-deploy
@@ -468,6 +494,9 @@ The **Manual operations** disclosure holds what the drag gestures don't cover:
 
 - **Deploy a specific image** — deploy an arbitrary image reference to any
   environment (e.g. a hotfix build, or a rollback to an older digest).
+- **Console** — run a drush command (or, with "raw shell", anything) in an
+  environment's container; output goes to the live log. Same as
+  `slipway console`.
 - **Detach ArgoCD** — run `slipway adopt` for an environment.
 - **Copy down (all options)** — choose source and target freely and combine
   `database only` / `files only` / `clean target tree`.
@@ -518,6 +547,7 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | GET    | `/api/state`      | `{running, operation, log}`                               |
 | POST   | `/api/pin`        | `env`                                                     |
 | POST   | `/api/adopt`      | `env`                                                     |
+| POST   | `/api/console`    | `env`, `cmd`, `shell`                                     |
 | POST   | `/api/deploy`     | `env`, and one of `image` / `release`; `no_snapshot`, `skip_update`, `skip_config_import` |
 | POST   | `/api/snapshot`   | `env`                                                    |
 | POST   | `/api/restore`    | `env`, `snapshot` (id)                                   |

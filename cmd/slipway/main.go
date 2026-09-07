@@ -1,8 +1,8 @@
 // Command slipway is the control plane.
 //
-// Phase 2: the grid reads the cluster, and the code lane can write to it. The
-// subcommands here and the web UI behind `slipway serve` drive the same
+// The subcommands here and the web UI behind `slipway serve` drive the same
 // operations in internal/ops — the CLI just points their progress at stdout.
+// Every mutating command records an audit row; `slipway history` reads it back.
 package main
 
 import (
@@ -30,6 +30,7 @@ const usage = `slipway — deployment control plane for Drupal on k3s
   slipway releases                 list recorded releases
   slipway pin   -env NAME          rewrite a tag-pinned Deployment to the digest it is already running
   slipway adopt -env NAME          strip leftover ArgoCD tracking so slipway owns the namespace
+  slipway console -env NAME -- CMD  run a command (drush by default; -shell for anything else) in the running container
   slipway deploy -env NAME (-image REF | -release REF)   snapshot the database, deploy, wait, run update hooks
         -no-snapshot  skip the pre-deploy snapshot   -skip-update  skip update hooks
   slipway snapshot  -env NAME       dump the database to object storage and record it
@@ -76,6 +77,7 @@ func run(args []string) error {
 		skipConfig = fs.Bool("skip-config-import", false, "omit config:import from the update sequence")
 		noSnapshot = fs.Bool("no-snapshot", false, "deploy without taking a pre-deploy database snapshot")
 		withData   = fs.Bool("with-data", false, "rollback: also restore the deploy's pre-deploy snapshot")
+		shell      = fs.Bool("shell", false, "console: run the command through sh -c instead of drush")
 		from       = fs.String("from", "", "source environment for copy-down")
 		to         = fs.String("to", "", "target environment for copy-down")
 		skipFiles  = fs.Bool("skip-files", false, "copy the database only, leaving files alone")
@@ -136,7 +138,7 @@ func run(args []string) error {
 	// one of them.
 	deadline := 30 * time.Second
 	switch command {
-	case "pin", "adopt":
+	case "pin", "adopt", "console":
 		deadline = 15 * time.Minute
 	case "deploy", "snapshot", "restore", "rollback", "copy-down", "resume":
 		deadline = 6 * time.Hour
@@ -157,6 +159,8 @@ func run(args []string) error {
 		return runner.Pin(ctx, *env)
 	case "adopt":
 		return runner.Adopt(ctx, *env)
+	case "console":
+		return runner.Console(ctx, *env, strings.Join(fs.Args(), " "), *shell)
 	case "deploy":
 		return runner.Deploy(ctx, *env, *image, *release, *skipUpdate, *skipConfig, *noSnapshot)
 	case "snapshot":

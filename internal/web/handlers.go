@@ -22,6 +22,7 @@ var indexHTML []byte
 const (
 	deployDeadline   = 6 * time.Hour
 	copyDownDeadline = 6 * time.Hour
+	consoleDeadline  = 15 * time.Minute
 )
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +118,19 @@ func (s *server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	}
 	s.launch(w, "adopt "+env, deployDeadline, func(ctx context.Context) error {
 		return s.runner.Adopt(ctx, env)
+	})
+}
+
+func (s *server) handleConsole(w http.ResponseWriter, r *http.Request) {
+	env := r.FormValue("env")
+	cmd := r.FormValue("cmd")
+	if env == "" || cmd == "" {
+		http.Error(w, "console needs env and cmd", http.StatusBadRequest)
+		return
+	}
+	shell := r.FormValue("shell") == "true"
+	s.launch(w, "console "+env, consoleDeadline, func(ctx context.Context) error {
+		return s.runner.Console(ctx, env, cmd, shell)
 	})
 }
 

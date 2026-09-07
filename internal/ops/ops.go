@@ -9,9 +9,11 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jtarleton/slipway/internal/drupal"
@@ -247,6 +249,74 @@ func (r *Runner) Adopt(ctx context.Context, name string) (err error) {
 		r.say("%s: cleared ArgoCD tracking from %d resource(s); slipway now owns %s", name, n, env.Namespace)
 	}
 	return nil
+}
+
+// Console runs a command in an environment's running Drupal container.
+//
+// By default cmdline is a drush invocation — `slipway console -env prod status`
+// runs `drush status`. shell runs it through `sh -c` instead, for anything that
+// is not drush. Output streams back through the reporter; a non-zero exit is an
+// error. Every run is audited.
+func (r *Runner) Console(ctx context.Context, name, cmdline string, shell bool) (err error) {
+	defer r.audit("console", name, map[string]any{"cmd": cmdline, "shell": shell}, &err)
+
+	cmdline = strings.TrimSpace(cmdline)
+	if cmdline == "" {
+		return fmt.Errorf("console needs a command")
+	}
+	env, err := r.env(name)
+	if err != nil {
+		return err
+	}
+
+	command := consoleCommand(cmdline, shell)
+	r.say("%s $ %s", name, strings.Join(command, " "))
+
+	w := &lineWriter{emit: func(line string) { r.say("  %s", line) }}
+	code, err := r.Client.Exec(ctx, env.Namespace, r.Workload, r.Container, command, w, w)
+	w.flush()
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("%s: command exited %d", name, code)
+	}
+	return nil
+}
+
+// consoleCommand turns a user's command line into an argv for the container.
+// Without shell it is a drush call; with shell it goes through sh -c so quoting
+// and pipes work.
+func consoleCommand(cmdline string, shell bool) []string {
+	if shell {
+		return []string{"sh", "-c", cmdline}
+	}
+	return append([]string{drupal.DrushBin}, strings.Fields(cmdline)...)
+}
+
+// lineWriter turns a byte stream into whole lines for a line-oriented reporter.
+type lineWriter struct {
+	emit func(string)
+	buf  []byte
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		w.emit(string(bytes.TrimRight(w.buf[:i], "\r")))
+		w.buf = w.buf[i+1:]
+	}
+}
+
+func (w *lineWriter) flush() {
+	if len(w.buf) > 0 {
+		w.emit(string(w.buf))
+		w.buf = nil
+	}
 }
 
 // Snapshot dumps an environment's database to object storage and records it.

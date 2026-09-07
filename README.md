@@ -17,12 +17,13 @@ and how to drive the web UI.
 
 ## Status
 
-Phase 3: releases close the loop with CI — a build is recorded once, then
-deployed and promoted by name.
+Phase 4: `slipway console` runs drush (or any command) in an environment's
+container, through the control plane and its audit log.
 
 | Working | |
 |---|---|
 | `slipway grid` | what is running in every environment, named by release where CI recorded one |
+| `slipway console -env NAME -- CMD` | run drush (or, with `-shell`, anything) in the running container |
 | `slipway release -image REF -sha SHA -ref REF` | record a built image (what CI calls after a build) |
 | `slipway releases` | list recorded releases |
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
@@ -82,7 +83,7 @@ cleaned up without someone deciding to.
 
     internal/jobs      state machine and deterministic Job naming
     internal/store     SQLite control-plane state, with tiny forward migrations
-    internal/k8s       cluster read and write
+    internal/k8s       cluster read, write, sweep (dynamic), and exec
     internal/engine    the reconcile loop
     internal/drupal    what each operation actually runs
     internal/grid      the "what is running where" read model, shared CLI/UI
@@ -118,6 +119,12 @@ tools, and the dump never lands on a PersistentVolume.
 row on completion — action, target, actor (`cli` or `web`), and outcome —
 regardless of which front end invoked it. `slipway history` and the web UI's
 operation-history table read the same log.
+
+**`console` execs into the running pod, not a Job.** The other operations run as
+Kubernetes Jobs because they must outlive the control plane. An ad-hoc
+`drush cache:rebuild` does not — it wants to be interactive-ish and immediate —
+so `console` streams `remotecommand` straight into the serving container. It is
+still audited like everything else.
 
 **Slipway is the sole owner of the namespace.** `deploy` and `pin` patch
 Deployments directly, with no GitOps controller to fight. `slipway adopt` makes
