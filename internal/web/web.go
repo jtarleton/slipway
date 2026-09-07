@@ -10,7 +10,9 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -110,22 +112,37 @@ func Serve(ctx context.Context, cfg Config, runner *ops.Runner) error {
 	}
 }
 
-// withAuth gates every request with HTTP Basic auth when basicAuth is set.
-// POST /api/releases is exempt — it carries its own bearer token so CI needs
-// only one credential.
+const authCookie = "slipway_auth"
+
+// withAuth gates every request when basicAuth is set. A request passes with
+// either the HTTP Basic credentials or the session cookie; a Basic-auth request
+// is also handed the cookie, because some browsers do not resend Basic
+// credentials to EventSource, which would leave the page unable to load its
+// data. /healthz (the kubelet probe) and the token-gated POST /api/releases are
+// exempt.
 func (s *server) withAuth(next http.Handler) http.Handler {
 	if s.basicAuth == "" {
 		return next
 	}
 	user, pass, _ := strings.Cut(s.basicAuth, ":")
+	// A cookie value derived from the credentials: survives restarts, is not the
+	// password itself, and is a fixed string to compare in constant time.
+	sum := sha256.Sum256([]byte(user + ":" + pass + "|slipway-cookie-v1"))
+	want := hex.EncodeToString(sum[:])
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /healthz is for the kubelet probe; POST /api/releases carries its own
-		// bearer token. Everything else needs the basic-auth credentials.
 		if r.URL.Path == "/healthz" ||
 			(r.Method == http.MethodPost && r.URL.Path == "/api/releases") {
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		if c, err := r.Cookie(authCookie); err == nil &&
+			subtle.ConstantTimeCompare([]byte(c.Value), []byte(want)) == 1 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		u, p, ok := r.BasicAuth()
 		if !ok ||
 			subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
@@ -134,6 +151,10 @@ func (s *server) withAuth(next http.Handler) http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		http.SetCookie(w, &http.Cookie{
+			Name: authCookie, Value: want, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 3600,
+		})
 		next.ServeHTTP(w, r)
 	})
 }

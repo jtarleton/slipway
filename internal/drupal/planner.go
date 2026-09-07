@@ -207,14 +207,18 @@ func (p *Planner) copyDatabase(env store.Environment, params Params) (k8s.JobSpe
 	// binaries are resolved at run time rather than assumed. --no-tablespaces
 	// is deliberately absent: it exists to avoid MySQL 8's PROCESS privilege
 	// requirement and MariaDB's dumper rejects it as an unknown option.
+	//
+	// --databases (not a bare db name) makes the dump carry CREATE DATABASE IF
+	// NOT EXISTS and USE, so the target is created when it does not exist and
+	// the client is not given a --database it cannot connect to.
 	const script = `
 DUMP="$(command -v mariadb-dump || command -v mysqldump)"
 CLIENT="$(command -v mariadb || command -v mysql)"
 [ -n "$DUMP" ] && [ -n "$CLIENT" ] || { echo "no mariadb client in this image" >&2; exit 1; }
 
-"$DUMP" --single-transaction --routines --triggers --events \
+"$DUMP" --single-transaction --routines --triggers --events --databases \
   -h "$SRC_HOST" -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" \
-| "$CLIENT" -h "$DST_HOST" -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE"
+| "$CLIENT" -h "$DST_HOST" -u root -p"$MARIADB_ROOT_PASSWORD"
 echo "copied $SRC_HOST -> $DST_HOST"
 `
 
@@ -248,7 +252,7 @@ func (p *Planner) snapshot(env store.Environment, params Params) (k8s.JobSpec, e
 	const dump = `
 DUMP="$(command -v mariadb-dump || command -v mysqldump)"
 [ -n "$DUMP" ] || { echo "no mariadb client in this image" >&2; exit 1; }
-"$DUMP" --single-transaction --routines --triggers --events \
+"$DUMP" --single-transaction --routines --triggers --events --databases \
   -h ` + ServiceDatabase + ` -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" \
   | gzip -9 > /scratch/dump.sql.gz
 echo "dumped $(wc -c < /scratch/dump.sql.gz) bytes"
@@ -293,11 +297,13 @@ aws s3 cp "$OBJECT_KEY" /scratch/dump.sql.gz --only-show-errors
 [ -s /scratch/dump.sql.gz ] || { echo "snapshot $OBJECT_KEY did not download" >&2; exit 1; }
 echo "downloaded $OBJECT_KEY"
 `
+	// The dump carries CREATE DATABASE / USE (it is taken with --databases), so
+	// the client is not given a --database it may not be able to connect to.
 	const load = `
 CLIENT="$(command -v mariadb || command -v mysql)"
 [ -n "$CLIENT" ] || { echo "no mariadb client in this image" >&2; exit 1; }
 gunzip -c /scratch/dump.sql.gz \
-  | "$CLIENT" -h ` + ServiceDatabase + ` -u root -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE"
+  | "$CLIENT" -h ` + ServiceDatabase + ` -u root -p"$MARIADB_ROOT_PASSWORD"
 echo "restored $SNAPSHOT_KEY"
 `
 

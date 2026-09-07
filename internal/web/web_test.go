@@ -315,13 +315,39 @@ func TestWithAuthGatesEverythingButReleases(t *testing.T) {
 		t.Fatalf("bad password = %d, want 401", rec.Code)
 	}
 
-	// Right credentials → through.
+	// Right credentials → through, and a session cookie is issued.
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/", nil)
 	req.SetBasicAuth("jt", "s3cret")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("good credentials = %d, want 200", rec.Code)
+	}
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == authCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("no session cookie issued after Basic auth")
+	}
+
+	// The cookie alone authenticates the next request (the EventSource case).
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/grid", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatal("session cookie did not authenticate a follow-up request")
+	}
+	// A tampered cookie does not.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/grid", nil)
+	req.AddCookie(&http.Cookie{Name: authCookie, Value: "nope"})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad cookie = %d, want 401", rec.Code)
 	}
 
 	// POST /api/releases is exempt — it has its own bearer token.
