@@ -281,17 +281,10 @@ func (s *server) runDueSchedules() {
 		}
 		name := sc.Name
 		def := sc
+		// RunSchedule stamps the final last_run / last_status itself.
 		err := s.start("cron: "+name, cronScheduleDeadline(def.Op), func(ctx context.Context) error {
-			runErr := s.runner.WithActor("cron", func() error { return s.runner.RunSchedule(ctx, def) })
-			status := "ok"
-			if runErr != nil {
-				status = "failed: " + firstLine(runErr.Error())
-			}
-			if e := s.runner.DB.RecordScheduleRun(name, time.Now().UTC().Format(time.RFC3339), status); e != nil {
-				log.Printf("slipway: record schedule run %s: %v", name, e)
-			}
-			s.pushSchedules()
-			return runErr
+			defer s.pushSchedules()
+			return s.runner.WithActor("cron", func() error { return s.runner.RunSchedule(ctx, def) })
 		})
 		if err == nil {
 			// Stamp last_run now so a second cron tick this minute does not

@@ -277,10 +277,25 @@ func (r *Runner) DeleteSchedule(name string) (err error) {
 	return r.DB.DeleteSchedule(name)
 }
 
-// RunSchedule performs a schedule's operation now. The individual operation
-// audits itself; RunSchedule is the dispatch, so a schedule with an unknown op
-// fails here rather than silently doing nothing.
+// RunSchedule performs a schedule's operation now and stamps the outcome on the
+// schedule row — for both the automatic evaluator and the "run now" button, so
+// last run / last status is always current. The individual operation audits
+// itself; RunSchedule is the dispatch, so a schedule with an unknown op fails
+// here rather than silently doing nothing.
 func (r *Runner) RunSchedule(ctx context.Context, s store.Schedule) error {
+	err := r.dispatchSchedule(ctx, s)
+
+	status := "ok"
+	if err != nil {
+		status = "failed: " + firstLine(err.Error())
+	}
+	if recErr := r.DB.RecordScheduleRun(s.Name, time.Now().UTC().Format(time.RFC3339), status); recErr != nil {
+		r.say("warning: schedule %q ran but its status was not recorded: %v", s.Name, recErr)
+	}
+	return err
+}
+
+func (r *Runner) dispatchSchedule(ctx context.Context, s store.Schedule) error {
 	switch s.Op {
 	case "snapshot":
 		return r.Snapshot(ctx, s.Env)
@@ -291,6 +306,13 @@ func (r *Runner) RunSchedule(ctx context.Context, s store.Schedule) error {
 	default:
 		return fmt.Errorf("schedule %q: unknown operation %q", s.Name, s.Op)
 	}
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // RunScheduleByName runs a stored schedule immediately, regardless of its cron

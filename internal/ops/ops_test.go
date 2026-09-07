@@ -129,6 +129,30 @@ func TestRunScheduleDispatchesAndUnknownOpFails(t *testing.T) {
 	}
 }
 
+// Both the automatic evaluator and "run now" go through RunSchedule, which must
+// stamp last_run / last_status either way.
+func TestRunScheduleRecordsTheOutcome(t *testing.T) {
+	r := testRunner(t, deployment("jt-drupal-dev", 1))
+	if _, err := r.DB.UpsertSchedule(store.Schedule{
+		Name: "hourly-cron", Spec: "0 * * * *", Op: "console", Env: "dev", Cmd: "status",
+	}); err != nil {
+		t.Fatalf("UpsertSchedule: %v", err)
+	}
+
+	_ = r.RunScheduleByName(context.Background(), "hourly-cron") // fails at exec, that's fine
+
+	s, err := r.DB.ScheduleByName("hourly-cron")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.LastRun == "" {
+		t.Error("RunScheduleByName did not stamp last_run")
+	}
+	if !strings.HasPrefix(s.LastStatus, "failed:") {
+		t.Errorf("last_status = %q, want the failure recorded", s.LastStatus)
+	}
+}
+
 func TestWithActorRestores(t *testing.T) {
 	r := testRunner(t)
 	r.Actor = "cli"
