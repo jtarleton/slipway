@@ -216,28 +216,24 @@ func (r *Runner) Rollback(ctx context.Context, name string, withData bool) error
 		if err != nil {
 			return err
 		}
-		r.say("  scaling %s/%s to 0 for the database restore", env.Namespace, r.Workload)
-		if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 0); err != nil {
+		// Patch the image and load the snapshot while the app is down, so it
+		// comes back up on the old code against the old data in one step.
+		err = r.withScaledDown(ctx, env, func() error {
+			if err := r.Client.PatchImage(ctx, env.Namespace, r.Workload, r.Container, dep.FromImage); err != nil {
+				return err
+			}
+			return r.restoreFromSnapshot(ctx, env, snap.ObjectKey)
+		})
+		if err != nil {
 			return err
 		}
-		if err := r.waitForPodsGone(ctx, env.Namespace); err != nil {
+	} else {
+		if err := r.Client.PatchImage(ctx, env.Namespace, r.Workload, r.Container, dep.FromImage); err != nil {
 			return err
 		}
-		if err := r.restoreFromSnapshot(ctx, env, snap.ObjectKey); err != nil {
+		if err := r.watch(ctx, env.Namespace); err != nil {
 			return err
 		}
-	}
-
-	if err := r.Client.PatchImage(ctx, env.Namespace, r.Workload, r.Container, dep.FromImage); err != nil {
-		return err
-	}
-	if withData {
-		if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 1); err != nil {
-			return err
-		}
-	}
-	if err := r.watch(ctx, env.Namespace); err != nil {
-		return err
 	}
 
 	if err := r.DB.MarkRolledBack(dep.ID); err != nil {
@@ -248,6 +244,68 @@ func (r *Runner) Rollback(ctx context.Context, name string, withData bool) error
 			"ran update hooks, roll back again with -with-data or restore a snapshot by hand.", short(dep.FromImage))
 	}
 	return nil
+}
+
+// Restore loads a specific recorded snapshot back into its environment.
+//
+// Unlike rollback this touches only the database — the running image is left
+// alone. Use it to undo a bad copy-down, recover from corruption, or return to
+// any point further back than the last deploy.
+func (r *Runner) Restore(ctx context.Context, name string, snapshotID int64) error {
+	env, err := r.env(name)
+	if err != nil {
+		return err
+	}
+	snap, err := r.DB.Snapshot(snapshotID)
+	if err != nil {
+		return fmt.Errorf("%s: no snapshot #%d: %w", name, snapshotID, err)
+	}
+	if snap.EnvID != env.ID {
+		return fmt.Errorf("snapshot #%d was taken from a different environment; restore it there", snapshotID)
+	}
+
+	r.say("%s: restoring database from snapshot #%d (%s)", name, snapshotID, snap.CreatedAt)
+	return r.withScaledDown(ctx, env, func() error {
+		return r.restoreFromSnapshot(ctx, env, snap.ObjectKey)
+	})
+}
+
+// Snapshots lists an environment's recorded snapshots, newest first.
+func (r *Runner) Snapshots(name string) ([]store.Snapshot, error) {
+	env, err := r.env(name)
+	if err != nil {
+		return nil, err
+	}
+	return r.DB.SnapshotsFor(env.ID)
+}
+
+// withScaledDown runs fn with the Drupal Deployment scaled to zero, then scales
+// it back and waits for the rollout. A database load must not happen under a
+// live application, and the pods must be gone rather than merely restarting.
+// fn's error is returned even if scaling back up succeeds — but the scale-up is
+// always attempted, so a failure does not strand the environment at zero.
+func (r *Runner) withScaledDown(ctx context.Context, env store.Environment, fn func() error) error {
+	r.say("  scaling %s/%s to 0", env.Namespace, r.Workload)
+	if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 0); err != nil {
+		return err
+	}
+	if err := r.waitForPodsGone(ctx, env.Namespace); err != nil {
+		return err
+	}
+
+	fnErr := fn()
+
+	r.say("  scaling %s/%s back to 1", env.Namespace, r.Workload)
+	if err := r.Client.Scale(ctx, env.Namespace, r.Workload, 1); err != nil {
+		if fnErr != nil {
+			return fnErr
+		}
+		return err
+	}
+	if fnErr != nil {
+		return fnErr
+	}
+	return r.watch(ctx, env.Namespace)
 }
 
 // restoreFromSnapshot queues and drives a KindRestore job that loads a database

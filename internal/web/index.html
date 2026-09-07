@@ -244,6 +244,11 @@
     <div id="stalled"></div>
   </section>
 
+  <section id="snapshots-sec" hidden>
+    <h2>Snapshots</h2>
+    <div class="tablewrap"><div id="snapshots"></div></div>
+  </section>
+
   <section>
     <h2>Recent jobs</h2>
     <div class="tablewrap"><div id="jobs"><div class="empty">no jobs yet</div></div></div>
@@ -525,6 +530,34 @@
     await post("/api/cancel", { group });
   });
 
+  function renderSnapshots(rows) {
+    rows = rows || [];
+    $("snapshots-sec").hidden = rows.length === 0;
+    if (!rows.length) return;
+    $("snapshots").innerHTML = `<table><thead><tr>
+        <th>Taken</th><th>Env</th><th>Object</th><th></th>
+      </tr></thead><tbody>` + rows.map(s => `
+        <tr>
+          <td class="mono">${esc(s.taken)}</td>
+          <td>${esc(s.env)}</td>
+          <td class="mono" style="max-width:360px;overflow:hidden;text-overflow:ellipsis">${esc(s.key)}</td>
+          <td><button class="act" data-restore="${s.id}" data-env="${esc(s.env)}"
+                data-taken="${esc(s.taken)}">restore</button></td>
+        </tr>`).join("") + `</tbody></table>`;
+  }
+  $("snapshots").addEventListener("click", (e) => {
+    const id = e.target.getAttribute("data-restore");
+    if (!id || running) return;
+    const env = e.target.getAttribute("data-env");
+    confirmOp({
+      title: `Restore ${env} from snapshot #${id}`,
+      kv: [["Environment", env], ["Snapshot", `#${id} · ${esc(e.target.getAttribute("data-taken"))}`]],
+      extra: `<div class="note">Overwrites <b>${esc(env)}</b>'s current database. The app is scaled
+        down for the load and back up afterwards. The running image is not changed.</div>`,
+      run: () => post("/api/restore", { env, snapshot: id }),
+    });
+  });
+
   // ---- state / log --------------------------------------------
   function setState(st) {
     running = !!st.running;
@@ -578,6 +611,7 @@
     es.addEventListener("grid", (e) => renderGrid(JSON.parse(e.data)));
     es.addEventListener("jobs", (e) => renderJobs(JSON.parse(e.data)));
     es.addEventListener("stalled", (e) => renderStalls(JSON.parse(e.data)));
+    es.addEventListener("snapshots", (e) => renderSnapshots(JSON.parse(e.data)));
     es.addEventListener("state", (e) => setState(JSON.parse(e.data)));
     es.addEventListener("log", (e) => appendLog(JSON.parse(e.data)));
   }

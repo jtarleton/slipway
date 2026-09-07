@@ -150,6 +150,41 @@ throughout — `--single-transaction` makes the dump consistent without locking.
 The control plane records where the dump went (the `snapshots` table); the file
 itself lives in object storage.
 
+### `slipway snapshots -env NAME`
+
+List an environment's recorded snapshots, newest first.
+
+```
+slipway snapshots -env prod
+```
+
+```
+ID   TAKEN                 SANITIZED   OBJECT
+14   2026-09-07 14:32:01   false       s3://…/slipway/prod/db/1788793921.sql.gz
+9    2026-09-06 09:15:44   false       s3://…/slipway/prod/db/1788700544.sql.gz
+```
+
+The `ID` is what `slipway restore` takes.
+
+### `slipway restore -env NAME -snapshot ID`
+
+Load a specific snapshot back into its environment.
+
+```
+slipway restore -env stage -snapshot 14
+```
+
+| Flag           | Meaning                                                    |
+|----------------|----------------------------------------------------------|
+| `-snapshot ID` | the snapshot to restore, from `slipway snapshots` (required) |
+
+Unlike `rollback` this touches only the database — the running image is left
+alone. The app is scaled to zero for the load and back up afterwards. Use it to
+undo a bad copy-down, recover from corruption, or go back further than the last
+deploy.
+
+A snapshot can only be restored into the environment it was taken from.
+
 ### `slipway rollback -env NAME`
 
 Return an environment to its previous deployment.
@@ -369,6 +404,10 @@ Below the matrix:
 - **Stalled sequences** — appears only when a copy-down is wedged behind a
   failed step. Shows which step blocked it and how many steps are waiting, with
   a **Cancel sequence** button (`slipway cancel`).
+- **Snapshots** — appears once any snapshot exists. Lists every recorded
+  snapshot (env, when, object key) with a **restore** button
+  (`slipway restore`), which opens a confirm dialog before overwriting that
+  environment's database.
 - **Recent jobs** — every step of every recent operation, with its state
   (`succeeded`, `failed`, `running`, `pending`, `cancelled`, or `stalled` for a
   step stuck behind a failure).
@@ -397,6 +436,7 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | POST   | `/api/pin`        | `env`                                                     |
 | POST   | `/api/deploy`     | `env`, `image`, `no_snapshot`, `skip_update`, `skip_config_import` |
 | POST   | `/api/snapshot`   | `env`                                                    |
+| POST   | `/api/restore`    | `env`, `snapshot` (id)                                   |
 | POST   | `/api/rollback`   | `env`, `with_data`                                       |
 | POST   | `/api/copy-down`  | `from`, `to`, `skip_files`, `skip_db`, `clean`            |
 | POST   | `/api/resume`     | —                                                        |

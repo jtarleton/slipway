@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,6 +169,58 @@ func TestGridExposesSnapshotsAndRollbackTarget(t *testing.T) {
 	}
 	if rows[0].RollbackTo != "" || rows[0].Snapshots != 0 {
 		t.Errorf("dev row should have no snapshots or rollback target: %+v", rows[0])
+	}
+}
+
+func TestSnapshotsAreStreamedAndRestorable(t *testing.T) {
+	s := testServer(t)
+	envs, _ := s.runner.DB.Environments()
+	dev := envs[0]
+	if _, err := s.runner.DB.RecordSnapshot(dev.ID, "s3://b/dev/db/7.sql.gz", false); err != nil {
+		t.Fatalf("RecordSnapshot: %v", err)
+	}
+
+	rows, err := s.snapshotRows()
+	if err != nil || len(rows) != 1 || rows[0].Env != "dev" || rows[0].Key != "s3://b/dev/db/7.sql.gz" {
+		t.Fatalf("snapshotRows = %+v (err %v)", rows, err)
+	}
+
+	// It reaches a new SSE client in the opening burst.
+	srv := httptest.NewServer(mux(s))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events", nil)
+	resp, _ := http.DefaultClient.Do(req)
+	buf := make([]byte, 8192)
+	n, _ := resp.Body.Read(buf)
+	resp.Body.Close()
+	if !strings.Contains(string(buf[:n]), "event: snapshots") {
+		t.Errorf("opening snapshot missing the snapshots event:\n%s", buf[:n])
+	}
+
+	// A restore into the wrong environment is refused before any work starts.
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/restore", "env=prod&snapshot="+strconv.FormatInt(rows[0].ID, 10)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("restore status %d: %s", rec.Code, rec.Body)
+	}
+	waitFor(t, func() bool {
+		for _, l := range s.stateView().Log {
+			if strings.Contains(l, "different environment") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestRestoreNeedsEnvAndSnapshot(t *testing.T) {
+	s := testServer(t)
+	rec := httptest.NewRecorder()
+	mux(s).ServeHTTP(rec, formPost("/api/restore", "env=dev"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("restore with no snapshot id: status %d, want 400", rec.Code)
 	}
 }
 

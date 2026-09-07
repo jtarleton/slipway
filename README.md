@@ -26,6 +26,7 @@ required it.
 | `slipway pin -env NAME` | rewrite a tag-pinned Deployment to the digest it already runs |
 | `slipway deploy -env NAME -image REF` | snapshot the database, patch, wait for the rollout, run update hooks |
 | `slipway snapshot -env NAME` | dump the database to object storage and record it |
+| `slipway snapshots -env NAME` / `restore -snapshot ID` | list snapshots, load one back |
 | `slipway rollback -env NAME` | re-deploy the previous image; `-with-data` also restores its pre-deploy snapshot |
 | `slipway copy-down -from prod -to stage` | files, database, sanitize — in order; `-skip-files` / `-skip-db` for one lane |
 | `slipway resume` | re-attach to work left in flight |

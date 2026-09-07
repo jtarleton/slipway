@@ -128,6 +128,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/pin", s.handlePin)
 	mux.HandleFunc("POST /api/deploy", s.handleDeploy)
 	mux.HandleFunc("POST /api/snapshot", s.handleSnapshot)
+	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/rollback", s.handleRollback)
 	mux.HandleFunc("POST /api/copy-down", s.handleCopyDown)
 	mux.HandleFunc("POST /api/resume", s.handleResume)
@@ -257,6 +258,13 @@ func (s *server) pushJobs() {
 		return
 	}
 	s.pushSnapshot("stalled", mustJSON(stalls))
+
+	snaps, err := s.snapshotRows()
+	if err != nil {
+		log.Printf("slipway: read snapshots: %v", err)
+		return
+	}
+	s.pushSnapshot("snapshots", mustJSON(snaps))
 }
 
 func (s *server) broadcastState() {
@@ -449,6 +457,34 @@ func (s *server) stallRows() ([]stallRow, error) {
 			Reason:  st.BlockedByReason,
 			Waiting: st.Waiting,
 		})
+	}
+	return rows, nil
+}
+
+type snapshotRow struct {
+	ID        int64  `json:"id"`
+	Env       string `json:"env"`
+	Taken     string `json:"taken"`
+	Key       string `json:"key"`
+	Sanitized bool   `json:"sanitized"`
+}
+
+func (s *server) snapshotRows() ([]snapshotRow, error) {
+	envs, err := s.runner.DB.Environments()
+	if err != nil {
+		return nil, err
+	}
+	var rows []snapshotRow
+	for _, e := range envs {
+		snaps, err := s.runner.DB.SnapshotsFor(e.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, sn := range snaps {
+			rows = append(rows, snapshotRow{
+				ID: sn.ID, Env: e.Name, Taken: sn.CreatedAt, Key: sn.ObjectKey, Sanitized: sn.Sanitized,
+			})
+		}
 	}
 	return rows, nil
 }

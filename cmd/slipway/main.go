@@ -27,7 +27,9 @@ const usage = `slipway — deployment control plane for Drupal on k3s
   slipway pin   -env NAME          rewrite a tag-pinned Deployment to the digest it is already running
   slipway deploy -env NAME -image REF   snapshot the database, deploy, wait for rollout, run update hooks
         -no-snapshot  skip the pre-deploy snapshot   -skip-update  skip update hooks
-  slipway snapshot -env NAME        dump the database to object storage and record it
+  slipway snapshot  -env NAME       dump the database to object storage and record it
+  slipway snapshots -env NAME       list the recorded snapshots for an environment
+  slipway restore  -env NAME -snapshot ID   load a specific snapshot back into its environment
   slipway rollback -env NAME        re-deploy the previous image   -with-data  also restore its pre-deploy snapshot
   slipway copy-down -from prod -to stage   copy database and files down, sanitizing on arrival
         -skip-files  database only   -skip-db  files only   -clean  empty the target tree first (first seed)
@@ -75,6 +77,7 @@ func run(args []string) error {
 		clean      = fs.Bool("clean", false, "empty the target file tree before pulling (needed on first seed)")
 		image      = fs.String("image", "", "image reference to deploy")
 		group      = fs.String("group", "", "job group for 'cancel'")
+		snapshotID = fs.Int64("snapshot", 0, "snapshot id for 'restore'")
 		addr       = fs.String("addr", ":8080", "address for 'serve' to listen on")
 	)
 	if err := fs.Parse(rest); err != nil {
@@ -116,7 +119,7 @@ func run(args []string) error {
 	switch command {
 	case "pin":
 		deadline = 15 * time.Minute
-	case "deploy", "snapshot", "rollback", "copy-down", "resume":
+	case "deploy", "snapshot", "restore", "rollback", "copy-down", "resume":
 		deadline = 6 * time.Hour
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
@@ -131,6 +134,13 @@ func run(args []string) error {
 		return runner.Deploy(ctx, *env, *image, *skipUpdate, *skipConfig, *noSnapshot)
 	case "snapshot":
 		return runner.Snapshot(ctx, *env)
+	case "snapshots":
+		return printSnapshots(runner, *env)
+	case "restore":
+		if *snapshotID == 0 {
+			return fmt.Errorf("restore needs -snapshot ID (see 'slipway snapshots -env %s')", *env)
+		}
+		return runner.Restore(ctx, *env, *snapshotID)
 	case "rollback":
 		return runner.Rollback(ctx, *env, *withData)
 	case "copy-down":
@@ -143,6 +153,26 @@ func run(args []string) error {
 		fmt.Print(usage)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+func printSnapshots(runner *ops.Runner, env string) error {
+	if env == "" {
+		return fmt.Errorf("snapshots needs -env")
+	}
+	snaps, err := runner.Snapshots(env)
+	if err != nil {
+		return err
+	}
+	if len(snaps) == 0 {
+		fmt.Printf("%s has no recorded snapshots\n", env)
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "ID\tTAKEN\tSANITIZED\tOBJECT")
+	for _, s := range snaps {
+		fmt.Fprintf(w, "%d\t%s\t%t\t%s\n", s.ID, s.CreatedAt, s.Sanitized, s.ObjectKey)
+	}
+	return w.Flush()
 }
 
 func printGrid(ctx context.Context, runner *ops.Runner) error {

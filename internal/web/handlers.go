@@ -4,7 +4,9 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -46,6 +48,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	writeEvent(w, "grid", jsonOrEmpty(s.gridRows(r.Context())))
 	writeEvent(w, "jobs", jsonOrEmpty(s.jobRows()))
 	writeEvent(w, "stalled", jsonOrEmpty(s.stallRows()))
+	writeEvent(w, "snapshots", jsonOrEmpty(s.snapshotRows()))
 	writeEvent(w, "state", mustJSON(s.stateView()))
 	flusher.Flush()
 
@@ -125,6 +128,18 @@ func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	s.launch(w, "snapshot "+env, copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Snapshot(ctx, env)
+	})
+}
+
+func (s *server) handleRestore(w http.ResponseWriter, r *http.Request) {
+	env := r.FormValue("env")
+	id, _ := strconv.ParseInt(r.FormValue("snapshot"), 10, 64)
+	if env == "" || id == 0 {
+		http.Error(w, "restore needs env and snapshot", http.StatusBadRequest)
+		return
+	}
+	s.launch(w, fmt.Sprintf("restore %s #%d", env, id), copyDownDeadline, func(ctx context.Context) error {
+		return s.runner.Restore(ctx, env, id)
 	})
 }
 
