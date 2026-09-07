@@ -92,6 +92,17 @@ cleaned up without someone deciding to.
     internal/ops       the operations, with nothing about how they are invoked
     internal/web       HTTP server, SSE, and the embedded page
     cmd/slipway        CLI
+    deploy/slipway     Dockerfile + k3s manifests to run `serve` in-cluster
+
+## Running in the cluster
+
+The scheduler and reconcile loop only run while `slipway serve` runs, so for
+schedules to be dependable it should be a workload, not a laptop process.
+`deploy/slipway/` has a Dockerfile (pure Go, distroless static) and manifests
+for its own namespace, a 1Gi PVC for the SQLite file, and least-privilege RBAC
+into the three Drupal namespaces — enough to read the grid, patch Deployments,
+scale, exec (`console`), and create the engine's Jobs, and nothing more.
+`deploy/slipway/README.md` has the build-and-apply steps.
 
 ## Design notes
 

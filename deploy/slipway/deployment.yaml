@@ -1,0 +1,92 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: slipway-db
+  namespace: slipway
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slipway
+  namespace: slipway
+  labels:
+    app.kubernetes.io/name: slipway
+spec:
+  replicas: 1
+  # SQLite is a single writer — never run two. Recreate stops the rollout from
+  # briefly having an old and a new pod both holding the database.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: slipway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: slipway
+    spec:
+      serviceAccountName: slipway
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65532        # distroless "nonroot" uid/gid — so the PVC is writable
+      imagePullSecrets:
+        - name: ghcr
+      containers:
+        - name: slipway
+          image: ghcr.io/jtarleton/slipway:latest   # set to a digest once CI records releases
+          args:
+            - serve
+            - -addr=:8080
+            - -db=/data/slipway.db
+          env:
+            - name: SLIPWAY_RELEASE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slipway
+                  key: release-token
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: db
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: slipway-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: slipway
+  namespace: slipway
+spec:
+  selector:
+    app.kubernetes.io/name: slipway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+  # ClusterIP by default. Expose it the way the Drupal sites are exposed — a
+  # NodePort plus an entry in the external proxy — if the web UI and the CI
+  # release hook need to be reachable. `kubectl -n slipway port-forward svc/slipway 8080`
+  # is enough for the UI alone.
+  type: ClusterIP

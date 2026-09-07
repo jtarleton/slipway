@@ -1,0 +1,54 @@
+# Build slipway's own image, push it to ghcr, and — if slipway is reachable and
+# a token is set — tell the running slipway about the build. That last step is
+# the same handoff any application would use (see docs/manual.md, "Wiring up
+# CI"); slipway just happens to be the application here.
+
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+
+      # Record the release with the running slipway. Skipped unless both the URL
+      # and the token are configured as repository secrets/variables.
+      - name: record release
+        if: vars.SLIPWAY_URL != '' && env.SLIPWAY_RELEASE_TOKEN != ''
+        env:
+          SLIPWAY_RELEASE_TOKEN: ${{ secrets.SLIPWAY_RELEASE_TOKEN }}
+        run: |
+          curl -fsS -X POST "${{ vars.SLIPWAY_URL }}/api/releases" \
+            -H "Authorization: Bearer $SLIPWAY_RELEASE_TOKEN" \
+            --data-urlencode "image=ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" \
+            --data-urlencode "ref=${{ github.ref }}" \
+            --data-urlencode "sha=${{ github.sha }}"

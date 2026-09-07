@@ -434,6 +434,9 @@ same one-at-a-time guard as manual operations and are recorded in
 `slipway history` as actor `cron`, plus a `last run` / `last status` on the
 schedule itself.
 
+For schedules to be dependable, run `serve` as a workload rather than from a
+terminal — see `deploy/slipway/`.
+
 ### `slipway serve -addr ADDR`
 
 Run the web UI and a background reconcile loop.

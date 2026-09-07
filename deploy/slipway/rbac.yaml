@@ -1,0 +1,124 @@
+# The slipway service account and the least-privilege it needs in each Drupal
+# namespace: read Deployments and Pods, patch Deployments (deploy / pin / scale),
+# exec into Pods (console), and create the Jobs the engine runs.
+#
+# Not granted: reading Secrets (the kubelet resolves the Secrets that Jobs
+# reference, slipway never does) and the broad patch surface `slipway adopt`
+# needs — that is a one-off cleanup, run it with a human kubeconfig.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: slipway
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: slipway
+  namespace: slipway
+---
+# Cluster-wide: slipway lists namespaces once at startup? No — it reads the
+# environment table for that. But `grid` and the reconciler read across the
+# three namespaces, which the per-namespace Roles below cover. Nothing here is
+# cluster-scoped.
+#
+# One Role, duplicated into each managed namespace, plus a RoleBinding to the
+# slipway service account.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: slipway
+  namespace: jt-drupal
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: slipway
+  namespace: jt-drupal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: slipway
+subjects:
+  - kind: ServiceAccount
+    name: slipway
+    namespace: slipway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: slipway
+  namespace: jt-drupal-stage
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: slipway
+  namespace: jt-drupal-stage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: slipway
+subjects:
+  - kind: ServiceAccount
+    name: slipway
+    namespace: slipway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: slipway
+  namespace: jt-drupal-dev
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: slipway
+  namespace: jt-drupal-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: slipway
+subjects:
+  - kind: ServiceAccount
+    name: slipway
+    namespace: slipway
