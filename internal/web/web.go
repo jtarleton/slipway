@@ -59,6 +59,16 @@ type Config struct {
 	// builds — bearer token, and exempt from BasicAuth so CI needs only the one
 	// credential. Empty disables the endpoint.
 	ReleaseToken string
+
+	// APIToken, if non-empty, is accepted as a bearer on every /api/* path and
+	// on /events — the credential for programmatic clients such as the Drupal
+	// module. Unlike Basic auth it lets the caller name its audit actor with
+	// X-Slipway-Actor. It is never accepted on the HTML page, and it does not
+	// record releases: that stays with ReleaseToken.
+	APIToken string
+
+	// Version is the build version reported by GET /api/version.
+	Version string
 }
 
 // Serve runs the web UI and the reconcile loop until the process is signalled.
@@ -66,7 +76,11 @@ func Serve(ctx context.Context, cfg Config, runner *ops.Runner) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	s := &server{runner: runner, hub: newHub(), releaseToken: cfg.ReleaseToken, basicAuth: cfg.BasicAuth}
+	s := &server{
+		runner: runner, hub: newHub(),
+		releaseToken: cfg.ReleaseToken, basicAuth: cfg.BasicAuth,
+		apiToken: cfg.APIToken, version: cfg.Version, baseActor: runner.Actor,
+	}
 	// Route the Runner's progress to every browser. Single-flight (see start)
 	// means only one operation writes here at a time.
 	runner.Report = s.emit
@@ -119,10 +133,19 @@ const authCookie = "slipway_auth"
 // is also handed the cookie, because some browsers do not resend Basic
 // credentials to EventSource, which would leave the page unable to load its
 // data. /healthz (the kubelet probe) and the token-gated POST /api/releases are
-// exempt.
+// exempt. The API token (see withAPIToken) is a third credential, checked
+// first; it is honoured even when basicAuth is empty, so a client's audit
+// actor is recorded either way.
 func (s *server) withAuth(next http.Handler) http.Handler {
 	if s.basicAuth == "" {
-		return next
+		if s.apiToken == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !s.withAPIToken(next, w, r) {
+				next.ServeHTTP(w, r)
+			}
+		})
 	}
 	user, pass, _ := strings.Cut(s.basicAuth, ":")
 	// A cookie value derived from the credentials: survives restarts, is not the
@@ -134,6 +157,9 @@ func (s *server) withAuth(next http.Handler) http.Handler {
 		if r.URL.Path == "/healthz" ||
 			(r.Method == http.MethodPost && r.URL.Path == "/api/releases") {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if s.withAPIToken(next, w, r) {
 			return
 		}
 
@@ -171,6 +197,9 @@ type server struct {
 	hub          *hub
 	releaseToken string // bearer token for POST /api/releases; "" disables it
 	basicAuth    string // "user:password" gating the whole UI; "" = open
+	apiToken     string // bearer token for /api/* and /events; "" disables it
+	baseActor    string // the Runner's actor at startup ("web"), for requests that name none
+	version      string // build version for GET /api/version
 
 	mu      sync.Mutex
 	current string   // running operation's name, "" when idle
@@ -204,6 +233,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/grid", s.handleGrid)
 	mux.HandleFunc("GET /api/jobs", s.handleJobs)
 	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
+	mux.HandleFunc("GET /api/releases", s.handleReleases)
+	mux.HandleFunc("GET /api/snapshots", s.handleSnapshots)
+	mux.HandleFunc("GET /api/history", s.handleHistory)
+	mux.HandleFunc("GET /api/stalled", s.handleStalled)
+	mux.HandleFunc("GET /api/schedules", s.handleSchedules)
 	mux.HandleFunc("POST /api/pin", s.handlePin)
 	mux.HandleFunc("POST /api/adopt", s.handleAdopt)
 	mux.HandleFunc("POST /api/console", s.handleConsole)
@@ -682,7 +717,7 @@ func (s *server) snapshotRows() ([]snapshotRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	var rows []snapshotRow
+	rows := make([]snapshotRow, 0)
 	for _, e := range envs {
 		snaps, err := s.runner.DB.SnapshotsFor(e.ID)
 		if err != nil {
@@ -706,8 +741,11 @@ type historyRow struct {
 	Outcome string `json:"outcome"` // "ok" or a short failure reason
 }
 
-func (s *server) historyRows() ([]historyRow, error) {
-	entries, err := s.runner.DB.History(80)
+func (s *server) historyRows() ([]historyRow, error) { return s.historyRowsN(80) }
+
+// historyRowsN is the newest n audit entries.
+func (s *server) historyRowsN(n int) ([]historyRow, error) {
+	entries, err := s.runner.DB.History(n)
 	if err != nil {
 		return nil, err
 	}

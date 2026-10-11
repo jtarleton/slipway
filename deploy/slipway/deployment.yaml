@@ -60,6 +60,15 @@ spec:
                   name: slipway
                   key: release-token
                   optional: true
+            # Bearer token for /api/* and /events — what the Drupal module
+            # (drupal/slipway) authenticates with. Separate from release-token:
+            # it runs operations but cannot record releases.
+            - name: SLIPWAY_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: slipway
+                  key: api-token
+                  optional: true
           ports:
             - name: http
               containerPort: 8080

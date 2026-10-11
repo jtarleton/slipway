@@ -37,7 +37,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		httpError(w, r, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 
@@ -83,7 +83,7 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleGrid(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.gridRows(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		httpError(w, r, err.Error(), http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, rows)
@@ -92,7 +92,7 @@ func (s *server) handleGrid(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.jobRows()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpError(w, r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, rows)
@@ -105,10 +105,10 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 func (s *server) handlePin(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	if env == "" {
-		http.Error(w, "pin needs env", http.StatusBadRequest)
+		httpError(w, r, "pin needs env", http.StatusBadRequest)
 		return
 	}
-	s.launch(w, "pin "+env, deployDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "pin "+env, deployDeadline, func(ctx context.Context) error {
 		return s.runner.Pin(ctx, env)
 	})
 }
@@ -116,10 +116,10 @@ func (s *server) handlePin(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleAdopt(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	if env == "" {
-		http.Error(w, "adopt needs env", http.StatusBadRequest)
+		httpError(w, r, "adopt needs env", http.StatusBadRequest)
 		return
 	}
-	s.launch(w, "adopt "+env, deployDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "adopt "+env, deployDeadline, func(ctx context.Context) error {
 		return s.runner.Adopt(ctx, env)
 	})
 }
@@ -132,7 +132,7 @@ func (s *server) handleScheduleUpsert(w http.ResponseWriter, r *http.Request) {
 		Cmd: r.FormValue("cmd"), Shell: r.FormValue("shell") == "true",
 	}
 	if err := s.runner.AddSchedule(sc); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.pushSchedules()
@@ -143,11 +143,11 @@ func (s *server) handleScheduleUpsert(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleScheduleToggle(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	if name == "" {
-		http.Error(w, "toggle needs name", http.StatusBadRequest)
+		httpError(w, r, "toggle needs name", http.StatusBadRequest)
 		return
 	}
 	if err := s.runner.SetScheduleEnabled(name, r.FormValue("enabled") == "true"); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.pushSchedules()
@@ -157,11 +157,11 @@ func (s *server) handleScheduleToggle(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleScheduleRemove(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	if name == "" {
-		http.Error(w, "remove needs name", http.StatusBadRequest)
+		httpError(w, r, "remove needs name", http.StatusBadRequest)
 		return
 	}
 	if err := s.runner.DeleteSchedule(name); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.pushSchedules()
@@ -171,10 +171,10 @@ func (s *server) handleScheduleRemove(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleScheduleRun(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	if name == "" {
-		http.Error(w, "run needs name", http.StatusBadRequest)
+		httpError(w, r, "run needs name", http.StatusBadRequest)
 		return
 	}
-	s.launch(w, "cron: "+name+" (manual)", copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "cron: "+name+" (manual)", copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.WithActor("cron", func() error {
 			return s.runner.RunScheduleByName(ctx, name)
 		})
@@ -185,11 +185,11 @@ func (s *server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	cmd := r.FormValue("cmd")
 	if env == "" || cmd == "" {
-		http.Error(w, "console needs env and cmd", http.StatusBadRequest)
+		httpError(w, r, "console needs env and cmd", http.StatusBadRequest)
 		return
 	}
 	shell := r.FormValue("shell") == "true"
-	s.launch(w, "console "+env, consoleDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "console "+env, consoleDeadline, func(ctx context.Context) error {
 		return s.runner.Console(ctx, env, cmd, shell)
 	})
 }
@@ -199,7 +199,7 @@ func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	image := r.FormValue("image")
 	release := r.FormValue("release")
 	if env == "" || (image == "") == (release == "") {
-		http.Error(w, "deploy needs env and exactly one of image or release", http.StatusBadRequest)
+		httpError(w, r, "deploy needs env and exactly one of image or release", http.StatusBadRequest)
 		return
 	}
 	skipUpdate := r.FormValue("skip_update") == "true"
@@ -209,7 +209,7 @@ func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if release != "" {
 		label += " " + release
 	}
-	s.launch(w, label, deployDeadline, func(ctx context.Context) error {
+	s.launch(w, r, label, deployDeadline, func(ctx context.Context) error {
 		return s.runner.Deploy(ctx, env, image, release, skipUpdate, skipConfig, noSnapshot)
 	})
 }
@@ -217,10 +217,10 @@ func (s *server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	if env == "" {
-		http.Error(w, "snapshot needs env", http.StatusBadRequest)
+		httpError(w, r, "snapshot needs env", http.StatusBadRequest)
 		return
 	}
-	s.launch(w, "snapshot "+env, copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "snapshot "+env, copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Snapshot(ctx, env)
 	})
 }
@@ -230,11 +230,11 @@ func (s *server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 // no token is configured — this is the one endpoint reachable from outside.
 func (s *server) handleRecordRelease(w http.ResponseWriter, r *http.Request) {
 	if s.releaseToken == "" {
-		http.Error(w, "release recording is not enabled (start serve with -release-token)", http.StatusNotFound)
+		httpError(w, r, "release recording is not enabled (start serve with -release-token)", http.StatusNotFound)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(bearer(r)), []byte(s.releaseToken)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		httpError(w, r, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -243,11 +243,11 @@ func (s *server) handleRecordRelease(w http.ResponseWriter, r *http.Request) {
 	ref := r.FormValue("ref")
 	builtAt := r.FormValue("built_at")
 	if image == "" || ref == "" {
-		http.Error(w, "release needs image and ref", http.StatusBadRequest)
+		httpError(w, r, "release needs image and ref", http.StatusBadRequest)
 		return
 	}
 	if err := s.runner.RecordRelease(image, sha, ref, builtAt); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpError(w, r, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.pushJobs()
@@ -267,10 +267,10 @@ func (s *server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	id, _ := strconv.ParseInt(r.FormValue("snapshot"), 10, 64)
 	if env == "" || id == 0 {
-		http.Error(w, "restore needs env and snapshot", http.StatusBadRequest)
+		httpError(w, r, "restore needs env and snapshot", http.StatusBadRequest)
 		return
 	}
-	s.launch(w, fmt.Sprintf("restore %s #%d", env, id), copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, fmt.Sprintf("restore %s #%d", env, id), copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Restore(ctx, env, id)
 	})
 }
@@ -278,11 +278,11 @@ func (s *server) handleRestore(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleRollback(w http.ResponseWriter, r *http.Request) {
 	env := r.FormValue("env")
 	if env == "" {
-		http.Error(w, "rollback needs env", http.StatusBadRequest)
+		httpError(w, r, "rollback needs env", http.StatusBadRequest)
 		return
 	}
 	withData := r.FormValue("with_data") == "true"
-	s.launch(w, "rollback "+env, copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "rollback "+env, copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Rollback(ctx, env, withData)
 	})
 }
@@ -291,7 +291,7 @@ func (s *server) handleCopyDown(w http.ResponseWriter, r *http.Request) {
 	from := r.FormValue("from")
 	to := r.FormValue("to")
 	if from == "" || to == "" {
-		http.Error(w, "copy-down needs from and to", http.StatusBadRequest)
+		httpError(w, r, "copy-down needs from and to", http.StatusBadRequest)
 		return
 	}
 	skipFiles := r.FormValue("skip_files") == "true"
@@ -305,13 +305,13 @@ func (s *server) handleCopyDown(w http.ResponseWriter, r *http.Request) {
 	case skipFiles:
 		what = "copy database"
 	}
-	s.launch(w, what+" "+from+"→"+to, copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, what+" "+from+"→"+to, copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.CopyDown(ctx, from, to, skipFiles, skipDB, clean)
 	})
 }
 
 func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
-	s.launch(w, "resume", copyDownDeadline, func(ctx context.Context) error {
+	s.launch(w, r, "resume", copyDownDeadline, func(ctx context.Context) error {
 		return s.runner.Resume(ctx)
 	})
 }
@@ -324,23 +324,49 @@ func (s *server) handleResume(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	group := r.FormValue("group")
 	if group == "" {
-		http.Error(w, "cancel needs group", http.StatusBadRequest)
+		httpError(w, r, "cancel needs group", http.StatusBadRequest)
 		return
 	}
-	if err := s.runner.Cancel(r.Context(), group); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+	// Cancel runs outside the single-flight guard, possibly beside a running
+	// operation, so the actor is passed explicitly instead of through the
+	// Runner's shared Actor field.
+	actor := actorFrom(r)
+	if actor == "" {
+		actor = s.baseActor
+	}
+	if err := s.runner.CancelAs(r.Context(), group, actor); err != nil {
+		httpError(w, r, err.Error(), http.StatusConflict)
 		return
 	}
 	s.pushJobs()
+	if wantsJSON(r) {
+		writeJSON(w, map[string]string{"operation": "cancel " + group})
+		return
+	}
 	w.Write([]byte("cancelled\n"))
 }
 
 // launch starts a foreground operation and answers the request immediately —
 // 202 if it began, 409 if another operation already holds the floor. Progress
-// arrives over the event stream, not in this response.
-func (s *server) launch(w http.ResponseWriter, name string, deadline time.Duration, fn func(context.Context) error) {
-	if err := s.start(name, deadline, fn); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+// arrives over the event stream, not in this response. An API client's actor
+// (X-Slipway-Actor) is applied inside the operation's goroutine, where the
+// single-flight guard makes Runner.WithActor safe; a schedule's own "cron"
+// actor, set inside fn, still wins.
+func (s *server) launch(w http.ResponseWriter, r *http.Request, name string, deadline time.Duration, fn func(context.Context) error) {
+	run := fn
+	if actor := actorFrom(r); actor != "" {
+		run = func(ctx context.Context) error {
+			return s.runner.WithActor(actor, func() error { return fn(ctx) })
+		}
+	}
+	if err := s.start(name, deadline, run); err != nil {
+		httpError(w, r, err.Error(), http.StatusConflict)
+		return
+	}
+	if wantsJSON(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(mustJSON(map[string]string{"operation": name}) + "\n"))
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)

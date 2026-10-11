@@ -50,6 +50,12 @@ func (r *Runner) say(format string, args ...any) {
 // succeeded. An audit-write failure is reported but never fails the operation —
 // the work happened either way.
 func (r *Runner) audit(action, target string, detail map[string]any, errp *error) {
+	r.auditAs(r.actor(), action, target, detail, errp)
+}
+
+// auditAs is audit with an explicit actor, for operations that may run beside
+// another one and so must not touch the shared Actor field.
+func (r *Runner) auditAs(actor, action, target string, detail map[string]any, errp *error) {
 	if detail == nil {
 		detail = map[string]any{}
 	}
@@ -60,7 +66,7 @@ func (r *Runner) audit(action, target string, detail map[string]any, errp *error
 		detail["ok"] = true
 	}
 	blob, _ := json.Marshal(detail)
-	if err := r.DB.Record(r.actor(), action, target, blob); err != nil {
+	if err := r.DB.Record(actor, action, target, blob); err != nil {
 		r.say("warning: audit record failed: %v", err)
 	}
 }
@@ -782,8 +788,18 @@ func (r *Runner) CopyDown(ctx context.Context, from, to string, skipFiles, skipD
 // not the cluster. The failed step that stalled the group stays as it is; what
 // changes is that the steps waiting behind it stop being offered to the engine
 // and stop making `resume` report a failure.
-func (r *Runner) Cancel(ctx context.Context, group string) (err error) {
-	defer r.audit("cancel", group, nil, &err)
+func (r *Runner) Cancel(ctx context.Context, group string) error {
+	return r.CancelAs(ctx, group, "")
+}
+
+// CancelAs is Cancel recorded under actor ("" = the Runner's own Actor). The
+// web server cancels outside its single-flight guard, so it cannot use
+// WithActor without racing a running operation.
+func (r *Runner) CancelAs(ctx context.Context, group, actor string) (err error) {
+	if actor == "" {
+		actor = r.actor()
+	}
+	defer r.auditAs(actor, "cancel", group, nil, &err)
 
 	stalls, err := r.DB.Stalls()
 	if err != nil {
