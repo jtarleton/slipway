@@ -7,7 +7,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOFLAGS=-trimpath go build -ldflags='-s -w' -o /slipway ./cmd/slipway
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOFLAGS=-trimpath go build -ldflags="-s -w -X main.version=${VERSION}" -o /slipway ./cmd/slipway
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /slipway /slipway

@@ -450,6 +450,7 @@ slipway serve -addr :8080
 | `-addr ADDR`      | `:8080`                       | address to listen on                                     |
 | `-auth`           | env `SLIPWAY_AUTH`            | `user:password` for HTTP Basic auth on the whole UI and API; unset leaves it open (and logs a warning) |
 | `-release-token`  | env `SLIPWAY_RELEASE_TOKEN`   | bearer token that enables `POST /api/releases` for CI; unset disables it |
+| `-api-token`      | env `SLIPWAY_API_TOKEN`       | bearer token for `/api/*` and `/events`, for API clients such as the Drupal module; unset disables it |
 
 Runs until it receives `SIGINT` or `SIGTERM`. While it runs it reconciles any
 in-flight jobs every few seconds — so a sequence started from the CLI, or left
@@ -594,6 +595,12 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 | GET    | `/api/grid`       | current grid as JSON                                      |
 | GET    | `/api/jobs`       | recent jobs as JSON                                       |
 | GET    | `/api/state`      | `{running, operation, log}`                               |
+| GET    | `/api/version`    | `{"api": 1, "slipway": "<build>"}`                        |
+| GET    | `/api/releases`   | recorded releases as JSON                                 |
+| GET    | `/api/snapshots`  | snapshots as JSON; `?env=` filters to one environment     |
+| GET    | `/api/history`    | the audit log, newest first; `?limit=` (default 50, max 500) |
+| GET    | `/api/stalled`    | stalled sequences as JSON                                 |
+| GET    | `/api/schedules`  | schedules as JSON                                         |
 | POST   | `/api/pin`        | `env`                                                     |
 | POST   | `/api/adopt`      | `env`                                                     |
 | POST   | `/api/console`    | `env`, `cmd`, `shell`                                     |
@@ -614,6 +621,30 @@ The web UI is a thin client over these endpoints; they are also usable directly.
 operation starts and `409 Conflict` when another is already running; progress
 then arrives on `/events`, not in the response. `cancel` is a synchronous
 bookkeeping write — `200 OK`, or `409` if the group is not stalled.
+
+Lists are always JSON arrays, `[]` when empty, never `null`. A client that
+sends `Accept: application/json` gets JSON bodies on writes and errors too:
+`202 {"operation": "deploy stage v2.1.0"}` and `4xx/5xx {"error": "..."}`.
+Everyone else (the bundled UI) gets the plain-text bodies.
+
+### API clients
+
+`-api-token` (env `SLIPWAY_API_TOKEN`) enables a third credential beside Basic
+auth and the release token: `Authorization: Bearer <api-token>`, accepted on
+every `/api/*` path and on `/events` but never on the HTML page. It can run
+every operation, so treat it like a deploy key. It cannot record releases;
+that stays with the release token, so CI holds the narrower credential.
+
+An API-token request may name who it acts for with
+`X-Slipway-Actor: <source>:<account>` (`drupal:jt`, `drush:root`), matching
+`^[a-z]+:[A-Za-z0-9._@-]{1,64}$`. That name, not `web`, goes into the audit
+log (`slipway history`). A malformed header is a `400`. The header is
+ignored on Basic-auth or cookie requests, so a browser session cannot claim
+an identity. A token request without the header is recorded as `api`.
+
+The [Drupal module](https://www.drupal.org/project/slipway) is such a client:
+it puts the dashboard and operations behind Drupal permissions and sends the
+logged-in user as the actor.
 
 ### Wiring up CI
 

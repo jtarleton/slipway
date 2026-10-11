@@ -54,7 +54,12 @@ Flags:
   -container   container within that Deployment (default drupal)
   -addr        address for 'serve' to listen on (default :8080)
   -auth        user:password for HTTP Basic auth on the web UI (env SLIPWAY_AUTH)
+  -api-token   bearer token for /api/* and /events, for API clients (env SLIPWAY_API_TOKEN)
 `
+
+// version is the build version reported by GET /api/version; the image build
+// sets it with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -105,6 +110,8 @@ func run(args []string) error {
 		addr       = fs.String("addr", ":8080", "address for 'serve' to listen on")
 		relToken   = fs.String("release-token", os.Getenv("SLIPWAY_RELEASE_TOKEN"),
 			"bearer token that enables POST /api/releases for CI (env SLIPWAY_RELEASE_TOKEN)")
+		apiToken = fs.String("api-token", os.Getenv("SLIPWAY_API_TOKEN"),
+			"bearer token for /api/* and /events, for API clients such as the Drupal module (env SLIPWAY_API_TOKEN)")
 		auth = fs.String("auth", os.Getenv("SLIPWAY_AUTH"),
 			"user:password for HTTP Basic auth on the whole UI (env SLIPWAY_AUTH); empty leaves it open")
 	)
@@ -146,6 +153,7 @@ func run(args []string) error {
 		runner.Actor = "web"
 		return web.Serve(context.Background(), web.Config{
 			Addr: *addr, BasicAuth: *auth, ReleaseToken: *relToken,
+			APIToken: *apiToken, Version: version,
 		}, runner)
 	}
 

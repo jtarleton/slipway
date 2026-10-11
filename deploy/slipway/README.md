@@ -35,10 +35,19 @@ kubectl -n jt-drupal get secret ghcr -o json \
   | kubectl -n slipway create -f -
 
 # the slipway secret: HTTP Basic auth for the UI (required — see below) and,
-# optionally, the CI release token
+# optionally, the CI release token and the API token for the Drupal module
 kubectl -n slipway create secret generic slipway \
   --from-literal=auth="jt:$(openssl rand -hex 16)" \
-  --from-literal=release-token="$(openssl rand -hex 24)"
+  --from-literal=release-token="$(openssl rand -hex 24)" \
+  --from-literal=api-token="$(openssl rand -hex 32)"
+```
+
+To add the API token to an existing secret:
+
+```
+kubectl -n slipway patch secret slipway --type merge \
+  -p "{\"stringData\":{\"api-token\":\"$(openssl rand -hex 32)\"}}"
+kubectl -n slipway rollout restart deploy/slipway
 ```
 
 `auth` gates the entire UI and API with HTTP Basic auth. It is **not optional**
